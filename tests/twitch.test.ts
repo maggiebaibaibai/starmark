@@ -57,9 +57,9 @@ class FakeSocket extends EventEmitter {
       ),
     );
   }
-  welcome(id = "session-1") {
+  welcome(id = "session-1", keepaliveSeconds = 10) {
     this.message("session_welcome", {
-      session: { id, keepalive_timeout_seconds: 10 },
+      session: { id, keepalive_timeout_seconds: keepaliveSeconds },
     });
   }
 }
@@ -462,7 +462,7 @@ it("resets the keepalive watchdog and reconnects when keepalives stop", async ()
     t.sockets[0]!.message("session_keepalive", {});
     await vi.advanceTimersByTimeAsync(9000);
     expect(t.sockets[0]!.closed).toBe(false);
-    await vi.advanceTimersByTimeAsync(2500);
+    await vi.advanceTimersByTimeAsync(6500);
     expect(t.sockets[0]!.closed).toBe(true);
     expect(t.sockets).toHaveLength(2);
   } finally {
@@ -861,3 +861,35 @@ it("retries a failed 401-triggered refresh even when the saved expiry is still i
     vi.useRealTimers();
   }
 });
+
+it.each([
+  { timeout: 10, late: 13_000 },
+  { timeout: 30, late: 40_000 },
+])(
+  "accepts a late keepalive inside the grace period for a $timeout-second timeout",
+  async ({ timeout, late }) => {
+    const t = await setup();
+    fakeConnectionTimers();
+    try {
+      await t.connect();
+      t.sockets[0]!.welcome("grace-session", timeout);
+      await vi.waitFor(() =>
+        expect(t.adapter.status().state).toBe("connected"),
+      );
+      await vi.advanceTimersByTimeAsync(late);
+      expect(t.sockets[0]!.closed).toBe(false);
+      t.sockets[0]!.message("session_keepalive", {});
+      const grace = Math.max(timeout * 1500, timeout * 1000 + 5000);
+      await vi.advanceTimersByTimeAsync(grace - 1);
+      expect(t.sockets[0]!.closed).toBe(false);
+      expect(t.sockets).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(t.sockets[0]!.closed).toBe(true);
+      await vi.advanceTimersByTimeAsync(500);
+      expect(t.sockets).toHaveLength(2);
+    } finally {
+      await t.adapter.dispose();
+      vi.useRealTimers();
+    }
+  },
+);

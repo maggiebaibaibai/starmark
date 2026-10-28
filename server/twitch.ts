@@ -679,7 +679,10 @@ export class LiveTwitch implements TwitchAdapter {
     let keepalive = 10_000;
     const arm = () => {
       clearTimeout(this.heartbeat);
-      this.heartbeat = setTimeout(() => socket.terminate(), keepalive + 1000);
+      this.heartbeat = setTimeout(
+        () => socket.terminate(),
+        Math.max(keepalive * 1.5, keepalive + 5000),
+      );
       this.heartbeat.unref();
     };
     arm();
