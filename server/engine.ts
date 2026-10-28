@@ -79,16 +79,21 @@ export function sanitizeReason(raw: string, blocklist: string[] = []): string {
     .replace(/[\p{Cc}\p{Cf}]/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
-  if (
-    blocklist.some(
-      (word) =>
-        word.trim() &&
-        clean
-          .toLocaleLowerCase()
-          .includes(word.trim().normalize("NFKC").toLocaleLowerCase()),
-    )
-  )
-    return "";
+  const folded = clean.toLocaleLowerCase();
+  // JS \b is ASCII-oriented. Unicode letters, combining marks, numbers and
+  // connector punctuation form words; punctuation/whitespace form boundaries.
+  const wordCharacter = /[\p{L}\p{M}\p{N}\p{Pc}]/u;
+  for (const entry of blocklist) {
+    const word = entry.trim().normalize("NFKC").toLocaleLowerCase();
+    if (!word) continue;
+    let from = 0;
+    for (let index = folded.indexOf(word, from); index >= 0; index = folded.indexOf(word, from)) {
+      const before = Array.from(folded.slice(0, index)).at(-1) ?? "";
+      const after = Array.from(folded.slice(index + word.length))[0] ?? "";
+      if (!wordCharacter.test(before) && !wordCharacter.test(after)) return "";
+      from = index + word.length;
+    }
+  }
   return Array.from(clean).slice(0, 40).join("");
 }
 export function closeDue(

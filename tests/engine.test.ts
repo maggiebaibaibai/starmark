@@ -169,4 +169,18 @@ describe("pure star engine", () => {
     ).toBe(true);
     expect(star({ ...fresh(), endedAt: 0 }, "a", 1).accepted).toBe(false);
   });
+  it("matches blocklist words at Unicode boundaries without hiding substrings", () => {
+    expect(sanitizeReason("the class was wild", ["ass"])).toBe("the class was wild");
+    expect(sanitizeReason("ASS!", ["ass"])).toBe("");
+    expect(sanitizeReason("pass ass", ["ass"])).toBe("");
+    expect(sanitizeReason("élan", ["lan"])).toBe("élan");
+    expect(sanitizeReason("très MÉCHANT!", ["méchant"])).toBe("");
+    expect(sanitizeReason("e\u0301lan", ["lan"])).toBe("élan");
+    expect(sanitizeReason("class_ass", ["ass"])).toBe("class_ass");
+    expect(sanitizeReason("a bad phrase!", ["bad phrase"])).toBe("");
+    expect(sanitizeReason("literal a+b!", ["a+b"])).toBe("");
+    expect(sanitizeReason("これは猫", ["猫"])).toBe("これは猫");
+    expect(sanitizeReason("猫！", ["猫"])).toBe("");
+  });
+
 });
