@@ -225,8 +225,19 @@ export async function createApp(options: AppOptions = {}) {
     } else if (event.type === "stream.update")
       await service.updateStream(event);
     else if (event.type === "connection.state") broadcast(event);
-    else
-      await service.message(event.user, event.text, event.messageId, event.at);
+    else {
+      try {
+        await service.message(
+          event.user,
+          event.text,
+          event.messageId,
+          event.at,
+        );
+      } catch (error) {
+        if (!(error instanceof ValidationError)) throw error;
+        await service.systemChat(`Chat command ignored: ${error.message}`);
+      }
+    }
   });
   function stopGenerator() {
     if (generator) clearInterval(generator);

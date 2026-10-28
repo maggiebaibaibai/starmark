@@ -565,8 +565,9 @@ export class LiveTwitch implements TwitchAdapter {
     }
   }
   private queueEvent(action: () => Promise<void>) {
-    this.events = this.events.then(action).catch(async () => {
-      await this.setConnection("error");
+    this.events = this.events.then(action).catch(async (error) => {
+      if (!(error instanceof ValidationError))
+        await this.setConnection("error");
     });
   }
   private async syncStream() {

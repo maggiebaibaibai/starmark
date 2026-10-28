@@ -13,6 +13,7 @@ import type { Star, Stream } from "../server/engine.js";
 import { Service } from "../server/service.js";
 import { Store } from "../server/store.js";
 import { createApp } from "../server/app.js";
+import { ValidationError } from "../server/errors.js";
 
 // These are synthetic credentials; this test never loads .env or opens a network socket.
 const config = {
@@ -559,4 +560,86 @@ it("empty polls after online cannot end the stream and later metadata polls cann
   const saved = await t.server.store.stream("live-stream");
   expect(saved!.stars).toHaveLength(1);
   expect(saved!.endedAt).toBeUndefined();
+});
+
+function chatNotification(socket: FakeSocket, id: string) {
+  socket.message("notification", {
+    subscription: { type: "channel.chat.message" },
+    event: {
+      broadcaster_user_id: "123",
+      chatter_user_id: "viewer",
+      chatter_user_name: "Viewer",
+      message_id: id,
+      message: { text: "!star" },
+      badges: [],
+    },
+  });
+}
+it("logs premature and draining chat commands without marking the connection as interrupted", async () => {
+  const t = await liveApp();
+  chatNotification(t.sockets[0]!, "before-online");
+  await vi.waitFor(() =>
+    expect(
+      t.server.service.messages.some(
+        (line) =>
+          line.kind === "system" && line.text.includes("Start a stream first"),
+      ),
+    ).toBe(true),
+  );
+  expect(t.adapter.status().state).toBe("connected");
+  await t.server.service.start({ type: "stream.online", id: "live-stream" });
+  await t.server.service.message({ id: "a", name: "a" }, "!star");
+  let release!: (marker: { id: string; positionSeconds: number }) => void;
+  const marker = vi.spyOn(t.adapter, "createMarker").mockImplementation(
+    () =>
+      new Promise((yes) => {
+        release = yes;
+      }),
+  );
+  const ending = t.server.service.end();
+  try {
+    await vi.waitFor(() => expect(marker).toHaveBeenCalledOnce());
+    chatNotification(t.sockets[0]!, "during-drain");
+    await vi.waitFor(() =>
+      expect(
+        t.server.service.messages.some(
+          (line) =>
+            line.kind === "system" && line.text.includes("Stream is ending"),
+        ),
+      ).toBe(true),
+    );
+    expect(t.adapter.status().state).toBe("connected");
+    expect(
+      t.events.some(
+        (event) =>
+          event.type === "connection.state" && event.status.state === "error",
+      ),
+    ).toBe(false);
+  } finally {
+    release({ id: "marker", positionSeconds: 15 });
+    await ending;
+  }
+});
+it("ignores listener validation errors but reports unexpected listener failures", async () => {
+  const t = await setup();
+  await t.connect();
+  t.sockets[0]!.welcome();
+  await vi.waitFor(() => expect(t.adapter.status().state).toBe("connected"));
+  const seen = vi.fn();
+  const unsubscribe = t.adapter.subscribe(async (event) => {
+    if (event.type === "channel.chat.message") {
+      seen();
+      throw new ValidationError("No active stream", 409);
+    }
+  });
+  chatNotification(t.sockets[0]!, "validation");
+  await vi.waitFor(() => expect(seen).toHaveBeenCalledOnce());
+  expect(t.adapter.status().state).toBe("connected");
+  unsubscribe();
+  t.adapter.subscribe(async (event) => {
+    if (event.type === "channel.chat.message")
+      throw new Error("Unexpected listener failure");
+  });
+  chatNotification(t.sockets[0]!, "unexpected");
+  await vi.waitFor(() => expect(t.adapter.status().state).toBe("error"));
 });

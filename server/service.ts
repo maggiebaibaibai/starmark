@@ -125,6 +125,14 @@ export class Service {
     this.messages = this.messages.slice(-40);
     return line;
   }
+  systemChat(text: string) {
+    return this.run(async () => {
+      this.publish({
+        type: "chat",
+        line: this.chat("starmark", text, "system"),
+      });
+    });
+  }
   private async persist() {
     if (this.active) await this.store.saveStream(this.active);
     await this.store.saveState(this.state);
