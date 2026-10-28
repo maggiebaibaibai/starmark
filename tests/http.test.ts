@@ -219,22 +219,34 @@ it("binds OAuth callbacks to the initiating browser, redirects safely and keeps 
   const adapter = new MockTwitch();
   Object.defineProperty(adapter, "mode", { value: "live" });
   const csrf = "a".repeat(64);
-  const auth = vi.spyOn(adapter, "authUrl").mockResolvedValue(`https://id.twitch.tv/oauth2/authorize?state=${csrf}`);
+  const auth = vi
+    .spyOn(adapter, "authUrl")
+    .mockResolvedValue(`https://id.twitch.tv/oauth2/authorize?state=${csrf}`);
   const callback = vi.spyOn(adapter, "handleCallback");
   const { base } = await setup({ adapter });
   const canonical = await fetch(base + "/auth/connect", { redirect: "manual" });
-  expect(new URL(canonical.headers.get("location")!).hostname).toBe("localhost");
+  expect(new URL(canonical.headers.get("location")!).hostname).toBe(
+    "localhost",
+  );
   expect(auth).not.toHaveBeenCalled();
-  const start = await fetch(base.replace("127.0.0.1", "localhost") + "/auth/connect", { redirect: "manual" });
+  const start = await fetch(
+    base.replace("127.0.0.1", "localhost") + "/auth/connect",
+    { redirect: "manual" },
+  );
   expect(start.status).toBe(302);
   expect(start.headers.get("set-cookie")).toContain("HttpOnly");
   expect(start.headers.get("set-cookie")).toContain("SameSite=Lax");
   expect(start.headers.get("cache-control")).toBe("no-store");
   const path = `/auth/callback?code=synthetic-code&state=${csrf}`;
   expect((await http(base, path)).status).toBe(400);
-  expect((await http(base, path, "GET", { Cookie: "starmark_oauth=wrong" })).status).toBe(400);
+  expect(
+    (await http(base, path, "GET", { Cookie: "starmark_oauth=wrong" })).status,
+  ).toBe(400);
   expect(callback).not.toHaveBeenCalled();
-  expect((await http(base, path, "GET", { Cookie: `starmark_oauth=${csrf}` })).status).toBe(302);
+  expect(
+    (await http(base, path, "GET", { Cookie: `starmark_oauth=${csrf}` }))
+      .status,
+  ).toBe(302);
   expect(callback).toHaveBeenCalledExactlyOnceWith("synthetic-code", csrf);
   expect((await http(base, "/auth/disconnect", "POST")).status).toBe(200);
   const mock = await setup();
@@ -245,7 +257,12 @@ it("reconciles repeated online events without erasing the current stream", async
   const { server } = await setup({ adapter });
   await adapter.emit({ type: "stream.online", id: "same-stream" });
   await server.service.message({ id: "a", name: "a" }, "!star");
-  await adapter.emit({ type: "stream.online", id: "same-stream", title: "Current title", viewerCount: 50 });
+  await adapter.emit({
+    type: "stream.online",
+    id: "same-stream",
+    title: "Current title",
+    viewerCount: 50,
+  });
   expect(server.service.active!.stars).toHaveLength(1);
   expect(server.service.active!.title).toBe("Current title");
 });

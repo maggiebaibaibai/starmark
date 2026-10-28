@@ -24,10 +24,13 @@ export interface ChatLine {
 }
 function signal() {
   let resolve!: () => void;
-  const promise = new Promise<void>((yes) => { resolve = yes; });
+  const promise = new Promise<void>((yes) => {
+    resolve = yes;
+  });
   return { promise, resolve };
 }
-const deliveryWarning = "Star delivery could not be saved. Check server storage; delivery resumes after the next successful write.";
+const deliveryWarning =
+  "Star delivery could not be saved. Check server storage; delivery resumes after the next successful write.";
 export class Service {
   state!: SavedState;
   active?: Stream;
@@ -59,7 +62,9 @@ export class Service {
       this.recovery?.();
       this.recovery = undefined;
       this.publish({ type: "delivery.status", warning: null });
-      queueMicrotask(() => { if (!this.disposed) this.scheduleDelivery(); });
+      queueMicrotask(() => {
+        if (!this.disposed) this.scheduleDelivery();
+      });
     });
     this.unsubscribeCache = store.onStreamSaved(() => {
       this.streamCache = undefined;
@@ -81,7 +86,11 @@ export class Service {
     if (this.twitch.mode === "live") this.state.mockOffset = 0;
     if (this.state.activeStreamId)
       this.active = await this.store.stream(this.state.activeStreamId);
-    if (this.active?.endedAt !== undefined || (this.active && this.active.mock !== (this.twitch.mode === "mock"))) this.active = undefined;
+    if (
+      this.active?.endedAt !== undefined ||
+      (this.active && this.active.mock !== (this.twitch.mode === "mock"))
+    )
+      this.active = undefined;
     if (!this.active) delete this.state.activeStreamId;
     for (const star of this.active?.stars ?? [])
       if (star.delivery === "processing") {
@@ -212,7 +221,11 @@ export class Service {
       if (this.disposed) return false;
       try {
         return await this.run(async () => {
-          if (this.active?.id !== streamId || !this.active.stars.some((s) => s.id === starId)) return false;
+          if (
+            this.active?.id !== streamId ||
+            !this.active.stars.some((s) => s.id === starId)
+          )
+            return false;
           await this.store.saveStream(this.active);
           return true;
         });

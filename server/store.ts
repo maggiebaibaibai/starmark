@@ -13,7 +13,9 @@ export class Store {
   private writeListeners = new Set<() => void>();
   onWrite(listener: () => void) {
     this.writeListeners.add(listener);
-    return () => { this.writeListeners.delete(listener); };
+    return () => {
+      this.writeListeners.delete(listener);
+    };
   }
   private savedListeners = new Set<() => void>();
   onStreamSaved(listener: () => void) {

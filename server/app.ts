@@ -90,17 +90,31 @@ export async function createApp(options: AppOptions = {}) {
         return;
       }
       const url = await adapter.authUrl();
-      if (!url) throw new ValidationError("Twitch authorization is unavailable", 503);
+      if (!url)
+        throw new ValidationError("Twitch authorization is unavailable", 503);
       const state = new URL(url).searchParams.get("state");
-      res.cookie("starmark_oauth", state, { httpOnly: true, sameSite: "lax", path: "/auth", maxAge: 600_000 });
+      res.cookie("starmark_oauth", state, {
+        httpOnly: true,
+        sameSite: "lax",
+        path: "/auth",
+        maxAge: 600_000,
+      });
       res.redirect(url);
     });
     app.get("/auth/callback", async (req, res) => {
       const state = typeof req.query.state === "string" ? req.query.state : "";
       const code = typeof req.query.code === "string" ? req.query.code : "";
-      const cookie = req.headers.cookie?.split(";").map((part) => part.trim()).find((part) => part.startsWith("starmark_oauth="))?.slice("starmark_oauth=".length);
+      const cookie = req.headers.cookie
+        ?.split(";")
+        .map((part) => part.trim())
+        .find((part) => part.startsWith("starmark_oauth="))
+        ?.slice("starmark_oauth=".length);
       res.clearCookie("starmark_oauth", { path: "/auth" });
-      if (!state || state !== cookie || code.length > 4096) throw new ValidationError("Twitch authorization expired or state did not match", 400);
+      if (!state || state !== cookie || code.length > 4096)
+        throw new ValidationError(
+          "Twitch authorization expired or state did not match",
+          400,
+        );
       await adapter.handleCallback(code, state);
       res.redirect("/dashboard");
     });
@@ -198,15 +212,16 @@ export async function createApp(options: AppOptions = {}) {
   }
   const unsubscribe = adapter.subscribe(async (event) => {
     if (event.type === "stream.online") {
-      if (service.active?.id === event.id) await service.updateStream({ ...event, type: "stream.update" });
+      if (service.active?.id === event.id)
+        await service.updateStream({ ...event, type: "stream.update" });
       else {
         if (service.active) await endAndExport();
         await service.start(event);
       }
     } else if (event.type === "stream.offline") {
       if (service.active) await endAndExport();
-    }
-    else if (event.type === "stream.update") await service.updateStream(event);
+    } else if (event.type === "stream.update")
+      await service.updateStream(event);
     else if (event.type === "connection.state") broadcast(event);
     else
       await service.message(event.user, event.text, event.messageId, event.at);

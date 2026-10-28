@@ -27,7 +27,10 @@ export function dashboardPage() {
   }
   $("connectTwitch").onclick = () => {
     if (state?.mode !== "live") return;
-    if (state.connection.state === "connected" || state.connection.state === "connecting") {
+    if (
+      state.connection.state === "connected" ||
+      state.connection.state === "connecting"
+    ) {
       void action(async () => {
         await api("/auth/disconnect", {});
         notice("Twitch disconnected.");
@@ -38,9 +41,18 @@ export function dashboardPage() {
     if (state) state.connection = status;
     const button = $<HTMLButtonElement>("connectTwitch");
     button.disabled = status.mode === "mock";
-    button.textContent = status.mode === "live" && ["connected", "connecting"].includes(status.state) ? "Disconnect Twitch" : "Connect Twitch";
-    if (status.mode === "live") $("connection").textContent = `Twitch ${status.state}`;
-    if (status.state === "error") notice("Twitch connection interrupted. Check app settings and reconnect.", true);
+    button.textContent =
+      status.mode === "live" &&
+      ["connected", "connecting"].includes(status.state)
+        ? "Disconnect Twitch"
+        : "Connect Twitch";
+    if (status.mode === "live")
+      $("connection").textContent = `Twitch ${status.state}`;
+    if (status.state === "error")
+      notice(
+        "Twitch connection interrupted. Check app settings and reconnect.",
+        true,
+      );
   }
   $("startForm").onsubmit = (e) => {
     e.preventDefault();
@@ -162,17 +174,31 @@ export function dashboardPage() {
     const active = next.active;
     const live = next.mode === "live";
     adapterStatus(next.connection);
-    document.querySelector(".mode")!.textContent = live ? "TWITCH LIVE" : "MOCK STUDIO";
-    for (const id of ["start", "end", "chatForm"]) $(id).style.display = live ? "none" : "";
-    document.querySelector<HTMLElement>(".generator-row")!.style.display = live ? "none" : "";
-    document.querySelector<HTMLElement>(".generator-row + .help")!.style.display = live ? "none" : "";
+    document.querySelector(".mode")!.textContent = live
+      ? "TWITCH LIVE"
+      : "MOCK STUDIO";
+    for (const id of ["start", "end", "chatForm"])
+      $(id).style.display = live ? "none" : "";
+    document.querySelector<HTMLElement>(".generator-row")!.style.display = live
+      ? "none"
+      : "";
+    document.querySelector<HTMLElement>(
+      ".generator-row + .help",
+    )!.style.display = live ? "none" : "";
     input("vodSaving").parentElement!.style.display = live ? "none" : "";
     input("streamTitle").readOnly = live;
     if (live) {
-      input("streamTitle").value = active?.title ?? "Waiting for your Twitch stream";
-      document.querySelector(".intro-note p")!.textContent = "Connect your broadcaster account. Streams start and end automatically.";
-      $("chatForm").previousElementSibling!.querySelector(".eyebrow")!.textContent = "TWITCH CHAT";
-      if (!settingsLoaded) notice("Connect Twitch below, then go live and type !star in Twitch chat.");
+      input("streamTitle").value =
+        active?.title ?? "Waiting for your Twitch stream";
+      document.querySelector(".intro-note p")!.textContent =
+        "Connect your broadcaster account. Streams start and end automatically.";
+      $("chatForm").previousElementSibling!.querySelector(
+        ".eyebrow",
+      )!.textContent = "TWITCH CHAT";
+      if (!settingsLoaded)
+        notice(
+          "Connect Twitch below, then go live and type !star in Twitch chat.",
+        );
     }
     $<HTMLButtonElement>("start").disabled = !!active;
     $<HTMLButtonElement>("end").disabled = !active;
@@ -252,7 +278,11 @@ export function dashboardPage() {
       $("chat").scrollTop = $("chat").scrollHeight;
     },
     connection: (connected: boolean) => {
-      $("connection").textContent = connected ? (state?.mode === "live" ? `Twitch ${state.connection.state}` : "Connected") : "Reconnecting…";
+      $("connection").textContent = connected
+        ? state?.mode === "live"
+          ? `Twitch ${state.connection.state}`
+          : "Connected"
+        : "Reconnecting…";
       document
         .querySelector(".status-dot")
         ?.classList.toggle("disconnected", !connected);

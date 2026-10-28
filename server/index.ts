@@ -12,7 +12,9 @@ const server = await createApp({
   channel: process.env.TWITCH_CHANNEL || "yourchannel",
   publicUrl: process.env.PUBLIC_URL,
 });
-console.log(`Starmark ${adapter.mode.toUpperCase()} → ${await server.listen(port)}/dashboard`);
+console.log(
+  `Starmark ${adapter.mode.toUpperCase()} → ${await server.listen(port)}/dashboard`,
+);
 for (const signal of ["SIGINT", "SIGTERM"] as const)
   process.once(signal, () => {
     void server.close().then(() => process.exit(0));

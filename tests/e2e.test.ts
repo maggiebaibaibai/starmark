@@ -348,18 +348,33 @@ describe("end-to-end mock run", () => {
 it("shows an enabled Connect Twitch button in real mode without starting OAuth or Twitch traffic", async () => {
   const liveRoot = await mkdtemp(resolve(".cache/tests/live-ui-"));
   let calls = 0;
-  const adapter = new LiveTwitch({ clientId: "test-app", clientSecret: "test-secret", channel: "test-channel",
-    redirectUri: "http://localhost:3000/auth/callback", dataDir: liveRoot,
-    fetch: async () => { calls++; throw new Error("Unexpected Twitch request"); },
-    socket: () => { calls++; throw new Error("Unexpected Twitch socket"); },
+  const adapter = new LiveTwitch({
+    clientId: "test-app",
+    clientSecret: "test-secret",
+    channel: "test-channel",
+    redirectUri: "http://localhost:3000/auth/callback",
+    dataDir: liveRoot,
+    fetch: async () => {
+      calls++;
+      throw new Error("Unexpected Twitch request");
+    },
+    socket: () => {
+      calls++;
+      throw new Error("Unexpected Twitch socket");
+    },
   });
   const live = await createApp({ adapter, dataDir: liveRoot, tick: false });
   const liveBase = await live.listen(0);
   const page = await browser.newPage();
   try {
     await page.goto(liveBase + "/dashboard");
-    await page.waitForFunction(() => document.documentElement.dataset.ready === "true");
-    const button = page.getByRole("button", { name: "Connect Twitch", exact: true });
+    await page.waitForFunction(
+      () => document.documentElement.dataset.ready === "true",
+    );
+    const button = page.getByRole("button", {
+      name: "Connect Twitch",
+      exact: true,
+    });
     expect(await button.isEnabled()).toBe(true);
     expect(await page.locator("#start").isVisible()).toBe(false);
     expect(await page.locator("#chatForm").isVisible()).toBe(false);
@@ -367,7 +382,8 @@ it("shows an enabled Connect Twitch button in real mode without starting OAuth o
     expect(await page.locator(".mode").textContent()).toBe("TWITCH LIVE");
     expect(calls).toBe(0);
   } finally {
-    await page.close(); await live.close();
+    await page.close();
+    await live.close();
     await rm(liveRoot, { recursive: true, force: true });
   }
 });

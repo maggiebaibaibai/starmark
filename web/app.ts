@@ -63,8 +63,7 @@ async function main() {
           update(data, data.events);
         } else if (data.type === "chat") chat(data.line);
         else if (data.type === "delivery.status") deliveryStatus(data.warning);
-        else if (data.type === "connection.state")
-          adapterStatus(data.status);
+        else if (data.type === "connection.state") adapterStatus(data.status);
         else if (data.type === "coldopen") play?.(data.previous);
         else if (data.type === "error") notice(data.message, true);
       } catch (error) {
