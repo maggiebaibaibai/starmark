@@ -6,7 +6,7 @@ After the stream, share a starmap; open the next stream with its three brightest
 
 **Demo GIF:** _placeholder — record the overlay → card → cold-open loop before submission._
 
-Task 1 is a complete local **mock-mode** rehearsal. No Twitch credentials, live Twitch calls, game footage, logos or third-party artwork are used. The approved visual reference is [design/mock-v2.html](design/mock-v2.html); behavior comes from [SPEC.md](SPEC.md).
+Starmark supports both a complete local **mock-mode** rehearsal and a real broadcaster Twitch connection. Mock mode needs no Twitch account; automated tests mock all Twitch HTTP and WebSocket traffic. No game footage, logos or third-party artwork are bundled. The approved visual reference is [design/mock-v2.html](design/mock-v2.html); behavior comes from [SPEC.md](SPEC.md).
 
 ## Five-minute setup
 
@@ -15,14 +15,14 @@ Use **Node 20.19+** (Node 20 LTS is selected by `.nvmrc`) and npm. From this fol
 ```sh
 # If you use nvm: nvm use
 npm ci
-cp .env.example .env
+test -f .env || cp .env.example .env
 npm run setup
 npm run dev
 ```
 
-Open **http://localhost:3000/dashboard**. `npm run setup` downloads Chromium and caches the four Google Fonts families locally; allow a few minutes for the first download. Runtime and PNG export then work without internet. Browser binaries, font downloads, npm cache and renderer temporary files stay inside `.cache/` in this project. On a minimal Linux install, Chromium may additionally need system browser libraries.
+Open **http://localhost:3000/dashboard**. `npm run setup` downloads Chromium and caches the four Google Fonts families locally; allow a few minutes for the first download. Mock runtime and PNG export then work without internet. Browser binaries, font downloads, npm cache and renderer temporary files stay inside `.cache/` in this project. On a minimal Linux install, Chromium may additionally need system browser libraries.
 
-The server defaults to `STARMARK_MOCK=1`, binds only to loopback, and refuses `STARMARK_MOCK=0` until Task 2. Change `PORT` and `PUBLIC_URL` together in `.env` if needed. Use Node 20.19 or later so `.env` can load through Node's built-in loader. No dotenv dependency.
+The server defaults to mock mode and binds only to loopback. Real mode requires both `STARMARK_MOCK=0` and all three Twitch settings below; missing settings safely select mock mode. Change `PORT` and `PUBLIC_URL` together in `.env` if needed. Use Node 20.19 or later so `.env` can load through Node's built-in loader. No dotenv dependency.
 
 All HTTP requests and WebSocket upgrades validate the literal Host and Origin. Allowed authorities are `localhost`, `127.0.0.1`, `[::1]` (with valid ports), or the exact host/port of `PUBLIC_URL`; arbitrary names resolving to loopback remain rejected. Browser Origins must match the validated request host/port or the configured public origin. Mock routes are not registered for live adapters; live initialization resets any stored mock-clock offset to zero. This is still a loopback app, not a public authenticated deployment.
 
@@ -83,14 +83,15 @@ The card is intentionally opaque. Ended-card exports are cached; live-card expor
 ## Architecture
 
 ```text
-Dashboard controls / fake chat generator / typed mock EventSub events
+Dashboard / mock chat generator / Twitch EventSub WebSocket
                          |
                          v
                 serialized stream service
                  |         |          |
           pure star     TwitchAdapter  WebSocket state + ignition events
             engine         |          |         |            |
-                 |      MockTwitch  /overlay  /coldopen   /dashboard
+                 |     MockTwitch or LiveTwitch
+                 |                    /overlay  /coldopen  /dashboard
                  v
         atomic JSON files under data/
                  |
@@ -99,7 +100,7 @@ Dashboard controls / fake chat generator / typed mock EventSub events
 
 - `server/engine.ts`: pure, immutable rules with an injected clock; no network/timers/storage.
 - `server/service.ts`: lifecycle, serialized changes, close side effects, warnings and message-ID deduplication.
-- `server/twitch.ts`: typed adapter and EventSub union, mock `status()`, `authUrl()`, `handleCallback(code,state)`, `disconnect()` stubs, and explicit Task 2 TODOs. `connection.state` reports connection changes; optional `stream.update` carries title/viewer-count updates.
+- `server/twitch.ts`: mock and live adapters, broadcaster OAuth, token refresh, EventSub sessions and Helix requests. `connection.state` reports connection changes; `stream.update` carries title/viewer-count updates. `server/twitch-tokens.ts` encrypts the private token file.
 - `server/store.ts`: one `data/streams/<id>.json` per stream, atomic temp-file/rename writes; `data/state.json` keeps active ID, settings and mock clock offset.
 - `server/app.ts`: Express HTTP, WebSocket server, mock controls, static pages, card endpoints.
 - `server/render.ts`: on-demand Chromium export, one render per card at a time, local-only requests. Browser profile, artifacts and downloads use explicit project-local paths; temporary-directory environment overrides apply only to the browser child process, never to the server’s global `TMPDIR`.
@@ -108,27 +109,34 @@ Dashboard controls / fake chat generator / typed mock EventSub events
 
 The single server serializes state/file mutations. Ordinary chat publishes only `{type:"chat", line}` and updates the bounded chat log, without scanning, saving or broadcasting the stream. Commands save and notify only when accepted or when they produce an engine event. Stream-history reads are cached and invalidated after `saveStream`.
 
-Chat events carry `at` in epoch milliseconds: mock sources capture the arrival time before queuing, and the future live adapter must use EventSub `metadata.message_timestamp`. The engine uses that timestamp for windows, cooldowns and offsets. Marker/clip/chat requests run in a background job after notifying clients; `delivery:"processing"` is a durable per-star lock. Results are merged back into the current stream by ID, so a slow request cannot overwrite new joiners or resurrect a moderated star. Offline drains delivery before resolving the archive and exporting the final card. Commands already queued ahead of offline are processed first.
+Chat events carry `at` in epoch milliseconds: mock sources capture the arrival time before queuing, and the live adapter uses EventSub `metadata.message_timestamp`. The engine uses that timestamp for windows, cooldowns and offsets. Marker/clip/chat requests run in a background job after notifying clients; `delivery:"processing"` is a durable per-star lock. Results are merged back into the current stream by ID, so a slow request cannot overwrite new joiners or resurrect a moderated star. Offline drains delivery before resolving the archive and exporting the final card. Commands already queued ahead of offline are processed first.
 
-The single server owns all stream mutations. Closed stars retain delivery status, marker position, original offset, clip ID and errors. Restart resumes active streams and pending closes. A delivery interrupted during an external call is flagged instead of blindly replayed; exactly-once remote writes across a crash cannot be guaranteed by a local JSON store. Failed markers do not discard stars or block clip/chat processing. Clip attempts are capped at 20 per stream.
+The single server owns all stream mutations. Closed stars retain delivery status, marker position, original offset, clip ID and errors. Restart resumes active streams and pending closes in the same mode. Switching modes does not deliver a previous mock stream to Twitch. A delivery interrupted during an external call is flagged instead of blindly replayed; exactly-once remote writes across a crash cannot be guaranteed by a local JSON store. A storage failure pauses at the exact delivery checkpoint, shows a dashboard warning, and resumes after the next successful write (for example Save settings); completed remote calls are not replayed. Failed markers do not discard stars or block clip/chat processing. Clip attempts are capped at 20 per stream.
 
 Reasons are NFKC-normalized; URLs, mentions and control characters are stripped; whitespace is collapsed; whole-word/phrase blocklist matches hide the reason (Unicode letters, combining marks, numbers and connector punctuation are word characters; `ass` does not match `class`); the remaining string is limited to 40 Unicode code points. Names and reasons are escaped/text-rendered on every page. Subscriber eligibility and names-only are configurable in the dashboard; mock chat has role/eligibility toggles. Automatic names-only is disabled in mock and uses the configurable viewer threshold in live mode.
 
 ## Task 2: real Twitch connection
 
-**Not implemented in Task 1.** The dashboard's Connect Twitch button is deliberately disabled; never put credentials into chat or source files.
+After the install above, connecting takes about five minutes:
 
-1. Create an app at [dev.twitch.tv/console](https://dev.twitch.tv/console). Register `http://localhost:3000/auth/callback` (or your configured port). Add its client ID/secret to the ignored `.env` when Task 2 implements the real adapter.
-2. Implement OAuth Authorization Code, CSRF state validation, secure token persistence, refresh and disconnect/revoke.
-3. Request `user:read:chat`, `user:write:chat`, `channel:manage:broadcast`, `clips:edit`. Followers-only is intentionally omitted to avoid requesting an additional scope.
-4. Implement EventSub WebSocket welcome/subscription, chat/online/offline events, keepalive/reconnect/revocation and durable duplicate-event handling.
-5. Implement Helix marker/clip/chat/archive calls, timeout/backoff/rate limits and 401 refresh. Match `video.stream_id === stream.id` (not just channel or start time) and poll after offline until the VOD is ready.
-6. Wire real channel title, start time, viewer count and roles. Test non-Affiliate accounts, VOD-off fallback and real clip embeds (correct `parent`, autoplay restrictions and fallback behavior).
+1. Register an application at [Twitch Developer Console](https://dev.twitch.tv/console). Set its OAuth redirect to **`http://localhost:3000/auth/callback`**. If you change `PORT`, register the corresponding localhost callback too.
+2. In your existing ignored `.env`, set `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, and `TWITCH_CHANNEL` (the broadcaster's login, without `@` or a URL). Keep these private; do not paste them into chat, screenshots, tests or source files. Preserve your existing `.env` when updating the project.
+3. In Twitch **Creator Dashboard → Settings → Stream**, turn on **Store past broadcasts** for VOD links and stream markers. Enable clips too if you want the clip fallback. No Affiliate-only scope is requested.
+4. Run `STARMARK_MOCK=0 npm run dev` and open **http://localhost:3000/dashboard**. Click **Connect Twitch**, sign in as the configured broadcaster, and authorize `user:read:chat`, `user:write:chat`, `channel:manage:broadcast`, and `clips:edit`. The localhost callback returns you to the dashboard. Starting the app without saved authorization does not open OAuth or call Twitch.
+5. Wait for **Twitch connected**, then go live. Chat viewers type `!star`; three unique lighters within 15 seconds qualify for a clip. The echo is sent as the broadcaster. Stream start/end, title and viewer count come from Twitch; OBS source URLs remain the same. Going offline finishes the card automatically.
 
-Mock mode does not validate real Twitch APIs, credentials, permissions, media playback or production hosting. `PUBLIC_URL` only controls the address printed on cards; public hosting/authentication is a separate deployment concern.
+To rehearse again, stop the server and run `STARMARK_MOCK=1 npm run dev`. To remove authorization, click **Disconnect Twitch**; it closes EventSub, revokes the access token and deletes local tokens. If Twitch cannot be reached for revocation, the dashboard explains how to remove the connection in Twitch Settings → Connections. An authorization error enables Connect Twitch again.
+
+Tokens live in ignored `data/twitch-tokens.json`, encrypted with AES-256-GCM using a key derived from the app secret, with owner-only file permissions. Keep both `.env` and `data/` private. Changing the app secret requires reconnecting. Authorization state is single-use, expires after ten minutes, and must match the initiating browser's HttpOnly cookie. Tokens are validated at startup and hourly, refreshed before expiry and after 401, and saved atomically. Request errors never include upstream response bodies or credentials.
+
+A fresh EventSub session subscribes to chat/online/offline. Dropped connections reconnect with bounded backoff and resubscribe; Twitch's `reconnect_url` migration keeps the existing subscriptions, as specified in the [EventSub WebSocket protocol](https://dev.twitch.tv/docs/eventsub/handling-websocket-events/#reconnect-message). Missing keepalives trigger reconnection. Revocation stops the session and requires reconnecting. Helix reads retry transient failures; explicit 401/429 rejections may retry within a three-attempt limit. Ambiguous marker, clip and chat writes are never automatically replayed.
+
+Archives are polled four times after offline (up to 14 seconds of backoff), matching `video.stream_id` exactly. If no matching archive is available, saved clips remain the fallback; timestamps are retained. Marker 404 shows the Store past broadcasts warning. Clips may take time to become playable, and Twitch/browser autoplay rules can require user interaction. Text fallback remains available in the cold open.
+
+Automated checks cover OAuth, HTTP and EventSub with synthetic credentials and fake transports, plus real local browser/PNG rendering. They do not verify your credentials, Twitch permissions, non-Affiliate behavior, live clip playback or actual VOD availability. Complete a short live rehearsal yourself after connecting. `PUBLIC_URL` controls card addresses and the host allowlist; this remains a local app, not a public authenticated deployment.
 
 ## How Codex was used
 
 Codex read the complete spec and rendered the approved second draft, implemented the typed engine/server/browser pages, added incremental commits, ran mock lifecycle and browser tests, inspected exported screenshots, and corrected rendering/interaction issues. The design source remains unchanged. No remote repository was created and nothing was pushed.
 
-Before submission: replace the GIF placeholder, add the real Twitch adapter in Task 2, record the demo, and fill in the hackathon attribution/video links.
+Before submission: complete a live Twitch rehearsal, replace the GIF placeholder, record the demo, and fill in the hackathon attribution/video links.
