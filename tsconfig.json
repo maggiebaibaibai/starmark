@@ -1,9 +1,16 @@
 {
   "compilerOptions": {
-    "target": "ES2022", "module": "NodeNext", "moduleResolution": "NodeNext",
-    "strict": true, "esModuleInterop": true, "skipLibCheck": true,
-    "outDir": "dist", "rootDir": ".", "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "sourceMap": true, "noUncheckedIndexedAccess": true
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "outDir": "dist",
+    "rootDir": ".",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "sourceMap": true,
+    "noUncheckedIndexedAccess": true
   },
   "include": ["server/**/*.ts", "web/**/*.ts"],
   "exclude": ["node_modules", "dist"]

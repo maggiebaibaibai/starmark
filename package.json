@@ -3,15 +3,32 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20.19"
+  },
   "scripts": {
     "dev": "npm run build:client && tsx watch server/index.ts",
     "build:client": "esbuild web/app.ts --bundle --format=esm --target=es2022 --outfile=dist/public/app.js",
     "build": "tsc && npm run build:client",
     "start": "node dist/server/index.js",
     "test": "vitest run",
-    "browser:install": "PLAYWRIGHT_BROWSERS_PATH=.cache/ms-playwright playwright install chromium"
+    "browser:install": "PLAYWRIGHT_BROWSERS_PATH=.cache/ms-playwright playwright install chromium",
+    "fonts:cache": "node scripts/cache-fonts.mjs",
+    "setup": "npm run browser:install && npm run fonts:cache",
+    "demo": "node scripts/demo.mjs"
   },
-  "dependencies": { "express": "^5.1.0", "playwright": "^1.56.1", "ws": "^8.18.3" },
-  "devDependencies": { "@types/express": "^5.0.3", "@types/node": "^22.18.0", "@types/ws": "^8.18.1", "esbuild": "^0.25.11", "tsx": "^4.20.6", "typescript": "^5.9.3", "vitest": "^3.2.4" }
+  "dependencies": {
+    "express": "^5.1.0",
+    "playwright": "^1.56.1",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.3",
+    "@types/node": "^22.18.0",
+    "@types/ws": "^8.18.1",
+    "esbuild": "^0.25.11",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.12"
+  }
 }
