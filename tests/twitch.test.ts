@@ -643,3 +643,221 @@ it("ignores listener validation errors but reports unexpected listener failures"
   chatNotification(t.sockets[0]!, "unexpected");
   await vi.waitFor(() => expect(t.adapter.status().state).toBe("error"));
 });
+
+function fakeConnectionTimers() {
+  vi.useFakeTimers({
+    toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"],
+  });
+}
+async function keepAliveFor(socket: FakeSocket, milliseconds: number) {
+  for (let remaining = milliseconds; remaining > 0; remaining -= 5000) {
+    await vi.advanceTimersByTimeAsync(Math.min(5000, remaining));
+    socket.message("session_keepalive", {});
+  }
+}
+const transientCases = ["refresh", "validate", "poll"].flatMap((endpoint) =>
+  ["503", "timeout"].map((failure) => ({ endpoint, failure })),
+);
+it.each(transientCases)(
+  "keeps authorization and automatically retries $failure during $endpoint",
+  async ({ endpoint, failure }) => {
+    const t = await setup();
+    fakeConnectionTimers();
+    try {
+      await t.connect();
+      t.sockets[0]!.welcome();
+      await vi.waitFor(() =>
+        expect(t.adapter.status().state).toBe("connected"),
+      );
+      const path =
+        endpoint === "refresh"
+          ? "/oauth2/token"
+          : endpoint === "validate"
+            ? "/oauth2/validate"
+            : "/helix/streams";
+      t.setHandler((url) => {
+        if (url.pathname !== path) return;
+        if (failure === "timeout")
+          throw new DOMException("Synthetic timeout", "TimeoutError");
+        return response({ message: "private upstream error" }, 503);
+      });
+      if (endpoint === "refresh") {
+        t.setNow(Date.parse("2026-10-28T13:00:01Z"));
+        await expect(
+          t.adapter.createMarker(stream, star, "test"),
+        ).rejects.toMatchObject({ status: 503 });
+      } else if (endpoint === "validate") {
+        t.setNow(Date.parse("2026-10-28T13:00:01Z"));
+        await keepAliveFor(t.sockets[0]!, 30_000);
+      } else {
+        t.sockets[0]!.message("notification", {
+          subscription: { type: "stream.online" },
+          event: {
+            broadcaster_user_id: "123",
+            id: "live-stream",
+            started_at: "2026-10-28T12:00:00Z",
+          },
+        });
+      }
+      await vi.waitFor(() =>
+        expect(t.adapter.status().state).toBe("reconnecting"),
+      );
+      const failedCalls = t.calls(path).length;
+      expect(t.sockets[0]!.closed).toBe(false);
+      await expect(
+        stat(join(t.root, "twitch-tokens.json")),
+      ).resolves.toBeDefined();
+      t.setHandler(() => undefined);
+      await vi.advanceTimersByTimeAsync(500);
+      await vi.waitFor(() =>
+        expect(t.adapter.status().state).toBe("connected"),
+      );
+      expect(t.calls(path).length).toBeGreaterThan(failedCalls);
+      expect(
+        t
+          .calls("/oauth2/token")
+          .filter(
+            ([, init]) =>
+              (init!.body as URLSearchParams).get("grant_type") ===
+              "authorization_code",
+          ),
+      ).toHaveLength(1);
+      expect(
+        t.events.some(
+          (event) =>
+            event.type === "connection.state" && event.status.state === "error",
+        ),
+      ).toBe(false);
+      await t.adapter.createMarker(stream, star, "recovered");
+    } finally {
+      await t.adapter.dispose();
+      vi.useRealTimers();
+    }
+  },
+);
+it.each(["503", "network"])(
+  "recovers saved authorization after a startup validate %s without another OAuth flow",
+  async (failure) => {
+    const t = await setup();
+    fakeConnectionTimers();
+    let restored: LiveTwitch | undefined;
+    try {
+      await t.connect();
+      await t.adapter.dispose();
+      t.setHandler((url) => {
+        if (url.pathname !== "/oauth2/validate") return;
+        if (failure === "network")
+          throw new TypeError("Synthetic network failure");
+        return response({}, 503);
+      });
+      restored = new LiveTwitch(t.options);
+      adapters.push(restored);
+      await restored.initialize();
+      expect(restored.status().state).toBe("reconnecting");
+      expect(t.sockets).toHaveLength(1);
+      await expect(
+        stat(join(t.root, "twitch-tokens.json")),
+      ).resolves.toBeDefined();
+      t.setHandler(() => undefined);
+      await vi.advanceTimersByTimeAsync(500);
+      await vi.waitFor(() => expect(t.sockets).toHaveLength(2));
+      t.sockets[1]!.welcome("restored-session");
+      await vi.waitFor(() =>
+        expect(restored!.status().state).toBe("connected"),
+      );
+      expect(t.calls("/oauth2/token")).toHaveLength(1);
+    } finally {
+      await restored?.dispose();
+      await t.adapter.dispose();
+      vi.useRealTimers();
+    }
+  },
+);
+it("retries dropped sockets past eight failures with a five-minute cap, then reconnects", async () => {
+  const t = await setup();
+  fakeConnectionTimers();
+  try {
+    await t.connect();
+    for (let attempt = 0; attempt < 12; attempt++) {
+      t.sockets.at(-1)!.terminate();
+      expect(t.adapter.status().state).toBe("reconnecting");
+      const count = t.sockets.length;
+      const wait = Math.min(300_000, 500 * 2 ** attempt);
+      await vi.advanceTimersByTimeAsync(wait - 1);
+      expect(t.sockets).toHaveLength(count);
+      await vi.advanceTimersByTimeAsync(1);
+      await vi.waitFor(() => expect(t.sockets).toHaveLength(count + 1));
+    }
+    t.sockets.at(-1)!.welcome("finally-connected");
+    await vi.waitFor(() => expect(t.adapter.status().state).toBe("connected"));
+    expect(t.calls("/oauth2/token")).toHaveLength(1);
+    await expect(
+      stat(join(t.root, "twitch-tokens.json")),
+    ).resolves.toBeDefined();
+  } finally {
+    await t.adapter.dispose();
+    vi.useRealTimers();
+  }
+});
+it.each(
+  ["refresh", "validate"].flatMap((endpoint) =>
+    [400, 401, 403].map((status) => ({ endpoint, status })),
+  ),
+)(
+  "requires new authorization for definitive $endpoint $status",
+  async ({ endpoint, status }) => {
+    const t = await setup();
+    fakeConnectionTimers();
+    let restored: LiveTwitch | undefined;
+    try {
+      await t.connect();
+      await t.adapter.dispose();
+      if (endpoint === "refresh") t.setNow(Date.parse("2026-10-28T13:00:01Z"));
+      t.setHandler((url) =>
+        url.pathname ===
+        (endpoint === "refresh" ? "/oauth2/token" : "/oauth2/validate")
+          ? response({}, status)
+          : undefined,
+      );
+      restored = new LiveTwitch(t.options);
+      adapters.push(restored);
+      await restored.initialize();
+      expect(restored.status().state).toBe("error");
+      await expect(
+        stat(join(t.root, "twitch-tokens.json")),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+      const calls = t.fetcher.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(600_000);
+      expect(t.fetcher.mock.calls).toHaveLength(calls);
+    } finally {
+      await restored?.dispose();
+      await t.adapter.dispose();
+      vi.useRealTimers();
+    }
+  },
+);
+
+it("retries a failed 401-triggered refresh even when the saved expiry is still in the future", async () => {
+  const t = await setup();
+  fakeConnectionTimers();
+  try {
+    await t.connect();
+    t.sockets[0]!.welcome();
+    await vi.waitFor(() => expect(t.adapter.status().state).toBe("connected"));
+    t.setHandler((url) => {
+      if (url.pathname === "/helix/streams/markers") return response({}, 401);
+      if (url.pathname === "/oauth2/token") return response({}, 503);
+    });
+    await expect(
+      t.adapter.createMarker(stream, star, "test"),
+    ).rejects.toMatchObject({ status: 503 });
+    expect(t.adapter.status().state).toBe("reconnecting");
+    t.setHandler(() => undefined);
+    await vi.advanceTimersByTimeAsync(500);
+    await vi.waitFor(() => expect(t.adapter.status().state).toBe("connected"));
+    expect(t.calls("/oauth2/token")).toHaveLength(3); // Initial code exchange, failed refresh, successful refresh.
+  } finally {
+    await t.adapter.dispose();
+    vi.useRealTimers();
+  }
+});

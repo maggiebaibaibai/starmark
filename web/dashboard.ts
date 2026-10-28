@@ -29,7 +29,8 @@ export function dashboardPage() {
     if (state?.mode !== "live") return;
     if (
       state.connection.state === "connected" ||
-      state.connection.state === "connecting"
+      state.connection.state === "connecting" ||
+      state.connection.state === "reconnecting"
     ) {
       void action(async () => {
         await api("/auth/disconnect", {});
@@ -43,7 +44,7 @@ export function dashboardPage() {
     button.disabled = status.mode === "mock";
     button.textContent =
       status.mode === "live" &&
-      ["connected", "connecting"].includes(status.state)
+      ["connected", "connecting", "reconnecting"].includes(status.state)
         ? "Disconnect Twitch"
         : "Connect Twitch";
     if (status.mode === "live")

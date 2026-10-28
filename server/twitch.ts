@@ -6,7 +6,7 @@ import { ValidationError } from "./errors.js";
 import { TokenVault, type Tokens } from "./twitch-tokens.js";
 import type { Star, Stream, User } from "./engine.js";
 export type ConnectionState =
-  "connected" | "disconnected" | "connecting" | "error";
+  "connected" | "disconnected" | "connecting" | "reconnecting" | "error";
 export interface ConnectionStatus {
   mode: "mock" | "live";
   state: ConnectionState;
@@ -57,6 +57,8 @@ export class TwitchError extends Error {
     super(message);
   }
 }
+// Only token/validate responses can prove authorization has been lost.
+class AuthorizationError extends TwitchError {}
 export class MockTwitch implements TwitchAdapter {
   readonly mode = "mock" as const;
   private connection: ConnectionState = "connected";
@@ -200,6 +202,9 @@ export class LiveTwitch implements TwitchAdapter {
   private retryTimer?: ReturnType<typeof setTimeout>;
   private maintenance?: ReturnType<typeof setInterval>;
   private maintaining = false;
+  private sessionReady = false;
+  private validationNeeded = true;
+  private refreshNeeded = false;
   private validatedAt = 0;
   private streamCheckedAt = 0;
   private reconnectAttempts = 0;
@@ -272,6 +277,8 @@ export class LiveTwitch implements TwitchAdapter {
     this.stopTransport();
     const epoch = ++this.authEpoch;
     this.refreshing = undefined;
+    this.reconnectAttempts = 0;
+    this.refreshNeeded = false;
     this.abort.abort();
     this.abort = new AbortController();
     this.stopped = false;
@@ -310,12 +317,13 @@ export class LiveTwitch implements TwitchAdapter {
       this.tokens = await this.vault.load();
       this.checkEpoch(epoch);
       if (!this.tokens) return; // Starting disconnected makes NO Twitch calls.
+      this.startMaintenance();
       await this.ensureToken();
       await this.validateCurrent();
       this.checkEpoch(epoch);
       this.startTransport();
-    } catch {
-      if (epoch === this.authEpoch) await this.setConnection("error");
+    } catch (error) {
+      await this.connectionFailure(error, epoch);
     }
   }
   private checkEpoch(epoch: number) {
@@ -355,7 +363,10 @@ export class LiveTwitch implements TwitchAdapter {
       }),
     });
     if (!response.ok)
-      throw new TwitchError("Twitch authorization failed", response.status);
+      throw new AuthorizationError(
+        "Twitch authorization failed",
+        response.status,
+      );
     const data = await this.json<TokenResponse>(response);
     if (!data.access_token || !data.refresh_token || !(data.expires_in > 0))
       throw new TwitchError("Invalid Twitch authorization", 502);
@@ -366,7 +377,10 @@ export class LiveTwitch implements TwitchAdapter {
       headers: { Authorization: `OAuth ${access}` },
     });
     if (!response.ok)
-      throw new TwitchError("Twitch authorization is invalid", response.status);
+      throw new AuthorizationError(
+        "Twitch authorization is invalid",
+        response.status,
+      );
     const data = await this.json<ValidatedToken>(response);
     if (
       data.client_id !== this.options.clientId ||
@@ -374,14 +388,16 @@ export class LiveTwitch implements TwitchAdapter {
       !data.user_id ||
       !twitchScopes.every((scope) => data.scopes?.includes(scope))
     )
-      throw new TwitchError(
+      throw new AuthorizationError(
         "Authorize the configured broadcaster with all required permissions",
         403,
       );
+    this.validationNeeded = false;
     this.validatedAt = this.now();
     return data;
   }
   private async validateCurrent() {
+    this.validationNeeded = true;
     try {
       await this.validate(this.tokens!.access);
     } catch (error) {
@@ -392,15 +408,21 @@ export class LiveTwitch implements TwitchAdapter {
   }
   private async ensureToken() {
     if (!this.tokens) throw new TwitchError("Connect Twitch first", 401);
-    if (this.now() >= this.tokens.expiresAt - 60_000) await this.refresh();
+    if (this.refreshNeeded || this.now() >= this.tokens.expiresAt - 60_000)
+      await this.refresh();
     return this.tokens!;
   }
   private refresh(): Promise<void> {
     if (this.refreshing) return this.refreshing;
+    if (this.retryTimer)
+      return Promise.reject(
+        new TwitchError("Twitch authorization is reconnecting", 503),
+      );
     const epoch = this.authEpoch;
     const old = this.tokens;
     if (!old)
       return Promise.reject(new TwitchError("Connect Twitch first", 401));
+    this.refreshNeeded = true;
     const job = (async () => {
       const response = await this.tokenRequest({
         grant_type: "refresh_token",
@@ -415,16 +437,12 @@ export class LiveTwitch implements TwitchAdapter {
       };
       await this.vault.save(this.tokens);
       this.checkEpoch(epoch);
+      this.refreshNeeded = false;
     })()
-      .catch(async () => {
-        if (epoch === this.authEpoch && !this.stopped) {
-          this.stopTransport();
-          await this.setConnection("error");
-        }
-        throw new TwitchError(
-          "Twitch authorization refresh failed; reconnect",
-          401,
-        );
+      .catch(async (error) => {
+        await this.connectionFailure(error, epoch);
+        // Preserve the status/source: a timeout or 5xx must never turn into a 401.
+        throw error;
       })
       .finally(() => {
         if (this.refreshing === job) this.refreshing = undefined;
@@ -540,26 +558,83 @@ export class LiveTwitch implements TwitchAdapter {
     }
     return undefined;
   }
-  private startTransport() {
-    this.stopped = false;
-    this.reconnectAttempts = 0;
-    this.openSocket();
+  private startMaintenance() {
+    if (this.maintenance) return;
     this.maintenance = setInterval(() => {
       void this.maintain();
     }, 30_000);
     this.maintenance.unref();
   }
+  private startTransport() {
+    if (this.stopped || !this.tokens) return;
+    this.startMaintenance();
+    if (!this.socket) this.openSocket();
+  }
+  /** The authorization remains usable until token/validate definitively rejects it. */
+  private async connectionFailure(error: unknown, epoch = this.authEpoch) {
+    if (epoch !== this.authEpoch || this.stopped) return;
+    if (
+      error instanceof AuthorizationError &&
+      [400, 401, 403].includes(error.status)
+    ) {
+      this.stopTransport();
+      this.authEpoch++;
+      this.tokens = undefined;
+      this.abort.abort();
+      await this.vault.delete().catch(() => {});
+      await this.setConnection("error");
+    } else if (this.tokens) {
+      await this.retryConnection();
+    } else {
+      // Unreadable local authorization has no token to retry. Never expose the file error.
+      await this.setConnection("error");
+    }
+  }
+  private async retryConnection() {
+    if (this.stopped || !this.tokens) return;
+    this.startMaintenance();
+    if (!this.retryTimer) {
+      const wait = Math.min(
+        300_000,
+        500 * 2 ** Math.min(this.reconnectAttempts++, 10),
+      );
+      this.retryTimer = setTimeout(() => {
+        this.retryTimer = undefined;
+        void this.maintain();
+      }, wait);
+      this.retryTimer.unref();
+    }
+    await this.setConnection("reconnecting");
+  }
+  private async healthy() {
+    if (this.stopped || !this.sessionReady || this.retryTimer) return;
+    this.reconnectAttempts = 0;
+    await this.setConnection("connected");
+  }
   private async maintain() {
-    if (this.maintaining || this.stopped || !this.tokens) return;
+    if (this.maintaining || this.stopped || !this.tokens || this.retryTimer)
+      return;
+    const epoch = this.authEpoch;
     this.maintaining = true;
     try {
       await this.ensureToken();
-      if (this.now() - this.validatedAt >= 3_600_000)
+      if (this.validationNeeded || this.now() - this.validatedAt >= 3_600_000)
         await this.validateCurrent();
-      if (this.now() - this.streamCheckedAt >= 60_000) await this.syncStream();
-    } catch {
-      this.stopTransport();
-      await this.setConnection("error");
+      this.checkEpoch(epoch);
+      if (!this.socket) {
+        this.startTransport();
+        return;
+      }
+      if (!this.sessionReady) return;
+      if (
+        this.connection === "reconnecting" ||
+        this.now() - this.streamCheckedAt >= 60_000
+      )
+        await this.syncStream();
+      this.checkEpoch(epoch);
+      await this.healthy();
+    } catch (error) {
+      await this.connectionFailure(error, epoch);
     } finally {
       this.maintaining = false;
     }
@@ -591,11 +666,15 @@ export class LiveTwitch implements TwitchAdapter {
 
   private openSocket(url = eventsub, transfer = false) {
     if (this.stopped || !this.tokens) return;
+    const epoch = this.authEpoch;
     const old = this.socket;
     const socket = this.makeSocket(url);
+    this.sessionReady = false;
     this.sockets.add(socket);
     this.socket = socket;
-    void this.setConnection("connecting");
+    void this.setConnection(
+      transfer || this.reconnectAttempts ? "reconnecting" : "connecting",
+    );
     let welcomed = false;
     let keepalive = 10_000;
     const arm = () => {
@@ -632,11 +711,13 @@ export class LiveTwitch implements TwitchAdapter {
             this.sockets.delete(old);
             old.close();
           }
-          this.reconnectAttempts = 0;
-          await this.setConnection("connected");
+          this.sessionReady = true;
           await this.syncStream();
-        })().catch(() => {
-          socket.terminate();
+          if (socket === this.socket) await this.healthy();
+        })().catch(async (error) => {
+          if (socket !== this.socket || this.stopped) return;
+          if (!this.sessionReady) this.closeSockets();
+          await this.connectionFailure(error, epoch);
         });
       } else if (metadata.message_type === "session_reconnect") {
         const target = payload.session?.reconnect_url;
@@ -676,21 +757,9 @@ export class LiveTwitch implements TwitchAdapter {
     socket.on("close", () => {
       this.sockets.delete(socket);
       if (socket !== this.socket || this.stopped) return;
-      clearTimeout(this.heartbeat);
       // If a migration fails, discard both sessions and create/subscribe a fresh one.
-      for (const other of this.sockets) other.terminate();
-      this.sockets.clear();
-      void this.setConnection("connecting");
-      if (++this.reconnectAttempts > 8) {
-        this.stopTransport();
-        void this.setConnection("error");
-        return;
-      }
-      this.retryTimer = setTimeout(
-        () => this.openSocket(),
-        Math.min(30_000, 500 * 2 ** (this.reconnectAttempts - 1)),
-      );
-      this.retryTimer.unref();
+      this.closeSockets();
+      void this.retryConnection();
     });
   }
   private async subscribeSession(sessionId: string) {
@@ -737,19 +806,30 @@ export class LiveTwitch implements TwitchAdapter {
         startedAt: Date.parse(event.started_at),
         viewerCount: 0,
       });
-      await this.syncStream();
+      const epoch = this.authEpoch;
+      try {
+        await this.syncStream();
+      } catch (error) {
+        await this.connectionFailure(error, epoch);
+      }
     } else if (type === "stream.offline") {
       await this.emit({ type });
     }
   }
-  private stopTransport() {
-    this.stopped = true;
+  private closeSockets() {
     clearTimeout(this.heartbeat);
-    clearTimeout(this.retryTimer);
-    clearInterval(this.maintenance);
+    this.socket = undefined;
+    this.sessionReady = false;
     for (const socket of this.sockets) socket.terminate();
     this.sockets.clear();
-    this.socket = undefined;
+  }
+  private stopTransport() {
+    this.stopped = true;
+    clearTimeout(this.retryTimer);
+    this.retryTimer = undefined;
+    clearInterval(this.maintenance);
+    this.maintenance = undefined;
+    this.closeSockets();
   }
   async disconnect() {
     const token = this.tokens?.access;
