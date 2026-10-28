@@ -39,7 +39,7 @@ export async function createApp(options: AppOptions = {}) {
       wss.emit("connection", client, request),
     );
   });
-  const adapter = options.adapter ?? new MockTwitch();
+  const adapter: TwitchAdapter = options.adapter ?? new MockTwitch();
   const store = new Store(options.dataDir);
   const broadcast = (event: object) => {
     const data = JSON.stringify(event);
@@ -74,6 +74,41 @@ export async function createApp(options: AppOptions = {}) {
       throw new ValidationError("Expected a JSON object");
     next();
   });
+  if (adapter.mode === "live") {
+    app.use("/auth", (_req, res, next) => {
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("Referrer-Policy", "no-referrer");
+      next();
+    });
+    app.get("/auth/connect", async (req, res) => {
+      // Match the registered localhost callback so its HttpOnly state cookie is available.
+      if (req.hostname !== "localhost") {
+        const local = new URL(origin);
+        local.hostname = "localhost";
+        local.pathname = "/auth/connect";
+        res.redirect(local.href);
+        return;
+      }
+      const url = await adapter.authUrl();
+      if (!url) throw new ValidationError("Twitch authorization is unavailable", 503);
+      const state = new URL(url).searchParams.get("state");
+      res.cookie("starmark_oauth", state, { httpOnly: true, sameSite: "lax", path: "/auth", maxAge: 600_000 });
+      res.redirect(url);
+    });
+    app.get("/auth/callback", async (req, res) => {
+      const state = typeof req.query.state === "string" ? req.query.state : "";
+      const code = typeof req.query.code === "string" ? req.query.code : "";
+      const cookie = req.headers.cookie?.split(";").map((part) => part.trim()).find((part) => part.startsWith("starmark_oauth="))?.slice("starmark_oauth=".length);
+      res.clearCookie("starmark_oauth", { path: "/auth" });
+      if (!state || state !== cookie || code.length > 4096) throw new ValidationError("Twitch authorization expired or state did not match", 400);
+      await adapter.handleCallback(code, state);
+      res.redirect("/dashboard");
+    });
+    app.post("/auth/disconnect", async (_req, res) => {
+      await adapter.disconnect();
+      res.json({ disconnected: true });
+    });
+  }
   app.use("/assets", express.static(resolve("dist/public")));
   app.use("/assets", express.static(resolve("web")));
   app.use("/fonts", express.static(resolve(".cache/fonts")));
@@ -162,8 +197,15 @@ export async function createApp(options: AppOptions = {}) {
     return stream;
   }
   const unsubscribe = adapter.subscribe(async (event) => {
-    if (event.type === "stream.online") await service.start(event);
-    else if (event.type === "stream.offline") await endAndExport();
+    if (event.type === "stream.online") {
+      if (service.active?.id === event.id) await service.updateStream({ ...event, type: "stream.update" });
+      else {
+        if (service.active) await endAndExport();
+        await service.start(event);
+      }
+    } else if (event.type === "stream.offline") {
+      if (service.active) await endAndExport();
+    }
     else if (event.type === "stream.update") await service.updateStream(event);
     else if (event.type === "connection.state") broadcast(event);
     else
@@ -383,6 +425,7 @@ export async function createApp(options: AppOptions = {}) {
       });
       const addr = http.address();
       origin = `http://${host.includes(":") ? `[${host}]` : host}:${typeof addr === "object" && addr ? addr.port : port}`;
+      await adapter.initialize?.();
       return origin;
     },
     async close() {

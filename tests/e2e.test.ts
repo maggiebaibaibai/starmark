@@ -12,7 +12,7 @@ import { resolve } from "node:path";
 import { build } from "esbuild";
 import { WebSocket } from "ws";
 import { createApp } from "../server/app.js";
-import { MockTwitch } from "../server/twitch.js";
+import { LiveTwitch, MockTwitch } from "../server/twitch.js";
 import type { Stream } from "../server/engine.js";
 import type { Browser } from "playwright";
 let server: Awaited<ReturnType<typeof createApp>>,
@@ -343,4 +343,31 @@ describe("end-to-end mock run", () => {
     });
     expect(settings.status).toBe(400);
   });
+});
+
+it("shows an enabled Connect Twitch button in real mode without starting OAuth or Twitch traffic", async () => {
+  const liveRoot = await mkdtemp(resolve(".cache/tests/live-ui-"));
+  let calls = 0;
+  const adapter = new LiveTwitch({ clientId: "test-app", clientSecret: "test-secret", channel: "test-channel",
+    redirectUri: "http://localhost:3000/auth/callback", dataDir: liveRoot,
+    fetch: async () => { calls++; throw new Error("Unexpected Twitch request"); },
+    socket: () => { calls++; throw new Error("Unexpected Twitch socket"); },
+  });
+  const live = await createApp({ adapter, dataDir: liveRoot, tick: false });
+  const liveBase = await live.listen(0);
+  const page = await browser.newPage();
+  try {
+    await page.goto(liveBase + "/dashboard");
+    await page.waitForFunction(() => document.documentElement.dataset.ready === "true");
+    const button = page.getByRole("button", { name: "Connect Twitch", exact: true });
+    expect(await button.isEnabled()).toBe(true);
+    expect(await page.locator("#start").isVisible()).toBe(false);
+    expect(await page.locator("#chatForm").isVisible()).toBe(false);
+    expect(await page.locator(".generator-row").isVisible()).toBe(false);
+    expect(await page.locator(".mode").textContent()).toBe("TWITCH LIVE");
+    expect(calls).toBe(0);
+  } finally {
+    await page.close(); await live.close();
+    await rm(liveRoot, { recursive: true, force: true });
+  }
 });

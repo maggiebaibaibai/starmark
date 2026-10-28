@@ -59,6 +59,7 @@ export class Service {
       this.recovery?.();
       this.recovery = undefined;
       this.publish({ type: "delivery.status", warning: null });
+      queueMicrotask(() => { if (!this.disposed) this.scheduleDelivery(); });
     });
     this.unsubscribeCache = store.onStreamSaved(() => {
       this.streamCache = undefined;
@@ -80,7 +81,7 @@ export class Service {
     if (this.twitch.mode === "live") this.state.mockOffset = 0;
     if (this.state.activeStreamId)
       this.active = await this.store.stream(this.state.activeStreamId);
-    if (this.active?.endedAt !== undefined) this.active = undefined;
+    if (this.active?.endedAt !== undefined || (this.active && this.active.mock !== (this.twitch.mode === "mock"))) this.active = undefined;
     if (!this.active) delete this.state.activeStreamId;
     for (const star of this.active?.stars ?? [])
       if (star.delivery === "processing") {
