@@ -9,6 +9,7 @@ import { Service } from "./service.js";
 import { MockTwitch, type TwitchAdapter } from "./twitch.js";
 import { CardRenderer } from "./render.js";
 import { ValidationError } from "./errors.js";
+import { requestAllowed } from "./security.js";
 export interface AppOptions {
   dataDir?: string;
   clock?: () => number;
@@ -22,7 +23,22 @@ const fontUrl =
 export async function createApp(options: AppOptions = {}) {
   const app = express();
   const http = createServer(app);
-  const wss = new WebSocketServer({ server: http, path: "/ws" });
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 });
+  http.on("upgrade", (request, socket, head) => {
+    if (!requestAllowed(request.headers, options.publicUrl)) {
+      socket.end(
+        "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+      );
+      return;
+    }
+    if (request.url !== "/ws") {
+      socket.destroy();
+      return;
+    }
+    wss.handleUpgrade(request, socket, head, (client) =>
+      wss.emit("connection", client, request),
+    );
+  });
   const adapter = options.adapter ?? new MockTwitch();
   const store = new Store(options.dataDir);
   const broadcast = (event: object) => {
@@ -43,21 +59,19 @@ export async function createApp(options: AppOptions = {}) {
   let generator: ReturnType<typeof setInterval> | undefined;
   let generation = 0;
   app.disable("x-powered-by");
-  app.use(express.json({ limit: "16kb" }));
   app.use((req, res, next) => {
-    // Local control API: reject cross-origin writes from unrelated websites.
-    if (
-      req.method !== "GET" &&
-      req.headers.origin &&
-      req.headers.origin !== origin &&
-      req.headers.origin !== `http://${req.headers.host}`
-    ) {
-      res
-        .status(403)
-        .json({ error: "Cross-origin control requests are disabled" });
+    if (!requestAllowed(req.headers, options.publicUrl)) {
+      res.status(403).json({ error: "Host or Origin is not allowed" });
       return;
     }
     res.setHeader("X-Content-Type-Options", "nosniff");
+    next();
+  });
+  app.use(express.json({ limit: "16kb" }));
+  app.use((req, _res, next) => {
+    req.body ??= {};
+    if (typeof req.body !== "object" || Array.isArray(req.body))
+      throw new ValidationError("Expected a JSON object");
     next();
   });
   app.use("/assets", express.static(resolve("dist/public")));
@@ -313,18 +327,30 @@ export async function createApp(options: AppOptions = {}) {
       res: express.Response,
       _next: express.NextFunction,
     ) => {
-      res.status(400).json({ error: error.message });
+      if (res.headersSent) {
+        _next(error);
+        return;
+      }
+      if (error instanceof ValidationError) {
+        res.status(error.status).json({ error: error.message });
+        return;
+      }
+      const type = (error as { type?: string }).type;
+      if (type === "entity.parse.failed") {
+        res.status(400).json({ error: "Invalid JSON body" });
+        return;
+      }
+      if (type === "entity.too.large") {
+        res.status(413).json({ error: "Request body is too large" });
+        return;
+      }
+      res.status(500).json({ error: "Internal server error" });
     },
   );
   wss.on("connection", (socket, request) => {
-    if (
-      request.headers.origin &&
-      request.headers.origin !== origin &&
-      request.headers.origin !== `http://${request.headers.host}`
-    ) {
-      socket.close(1008, "Origin rejected");
-      return;
-    }
+    socket.on("message", () =>
+      socket.close(1003, "This socket is receive-only"),
+    );
     void service
       .snapshot()
       .then((snapshot) => {
