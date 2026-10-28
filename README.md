@@ -24,6 +24,10 @@ Open **http://localhost:3000/dashboard**. `npm run setup` downloads Chromium and
 
 The server defaults to `STARMARK_MOCK=1`, binds only to loopback, and refuses `STARMARK_MOCK=0` until Task 2. Change `PORT` and `PUBLIC_URL` together in `.env` if needed. Use Node 20.19 or later so `.env` can load through Node's built-in loader. No dotenv dependency.
 
+All HTTP requests and WebSocket upgrades validate the literal Host and Origin. Allowed authorities are `localhost`, `127.0.0.1`, `[::1]` (with valid ports), or the exact host/port of `PUBLIC_URL`; arbitrary names resolving to loopback remain rejected. Browser Origins must match the validated request host/port or the configured public origin. Mock routes are not registered for live adapters; live initialization resets any stored mock-clock offset to zero. This is still a loopback app, not a public authenticated deployment.
+
+WebSockets are receive-only: inbound text/binary messages close with 1003. The 1024-byte limit rejects oversized frames before message delivery with the standard 1009 close code. Known validation failures return safe 4xx responses; unexpected failures return only `Internal server error` (500).
+
 ```sh
 npm test           # Vitest: pure logic, lifecycle and a real browser/PNG mock run
 npm run build      # TypeScript checking + server and browser output in dist/
@@ -45,7 +49,7 @@ For a different demo port: `STARMARK_URL=http://localhost:4318 npm run demo`. De
 
 Uncheck **Mock VOD saving** before closing a star to exercise marker 404 warnings and clip fallback. With no archive and fewer than three lighters, the star has a saved timestamp but no playable link. All `mock-vod-*` and `mock-clip-*` IDs are deliberately fictional; cold open uses the designed full-screen text/gradient treatment rather than requesting nonexistent clips. No Twitch account is needed.
 
-**Counts:** a lighter is a unique viewer _within a star_. The card headline, dashboard and JSON use the sum of those per-star counts; a viewer who lights two different stars contributes twice. Ties in top-three ranking go to the earlier moment, then stable ID. Card links use the original ignition offset, not the later marker-close position.
+**Counts:** a lighter is a unique viewer _within a star_. The card headline, dashboard and JSON use the sum of those per-star counts; a viewer who lights two different stars contributes twice. Ties in top-three ranking go to the earlier moment, then stable ID. Card links use the original ignition offset, not the later marker-close position. Bot echoes say `N of you`, including the owner. Markers say `★ @owner +N-1`, counting the other viewers: three lighters produce `3 of you` and `★ @owner +2`.
 
 ## OBS: three browser sources
 
@@ -74,7 +78,7 @@ Card routes:
 - `/card/<id>.json` and `/api/streams/<id>` — stream plus `totalLighters`, `topThree`, `durationSeconds`, `cardUrl`.
 - `/card/<id>.png` — exact 1080 × 1350 render of the same page, saved to `data/cards/`.
 
-The card is intentionally opaque. Ended-card exports are cached; live-card exports regenerate. Only the local app can be requested by the PNG browser, and fonts are served locally after setup.
+The card is intentionally opaque. Ended-card exports are cached; live-card exports reuse a PNG for up to 10 seconds, then regenerate. Offline waits for pending delivery and forces a fresh final export, even when a live render is in flight. Only the local app can be requested by the PNG browser, and fonts are served locally after setup.
 
 ## Architecture
 
@@ -95,16 +99,20 @@ Dashboard controls / fake chat generator / typed mock EventSub events
 
 - `server/engine.ts`: pure, immutable rules with an injected clock; no network/timers/storage.
 - `server/service.ts`: lifecycle, serialized changes, close side effects, warnings and message-ID deduplication.
-- `server/twitch.ts`: typed adapter and EventSub union, a mock implementation, explicit Task 2 TODOs.
+- `server/twitch.ts`: typed adapter and EventSub union, mock `status()`, `authUrl()`, `handleCallback(code,state)`, `disconnect()` stubs, and explicit Task 2 TODOs. `connection.state` reports connection changes; optional `stream.update` carries title/viewer-count updates.
 - `server/store.ts`: one `data/streams/<id>.json` per stream, atomic temp-file/rename writes; `data/state.json` keeps active ID, settings and mock clock offset.
 - `server/app.ts`: Express HTTP, WebSocket server, mock controls, static pages, card endpoints.
-- `server/render.ts`: on-demand Chromium export, one render per card at a time, local-only requests.
+- `server/render.ts`: on-demand Chromium export, one render per card at a time, local-only requests. Browser profile, artifacts and downloads use explicit project-local paths; temporary-directory environment overrides apply only to the browser child process, never to the server’s global `TMPDIR`.
 - `web/`: TypeScript pages sharing the exact four-point star path and approved CSS foundation; no frontend framework.
 - `tests/`: engine, service and end-to-end tests. Temporary test streams and visual evidence are written below `.cache/`; test data is cleaned afterward.
 
+The single server serializes state/file mutations. Ordinary chat publishes only `{type:"chat", line}` and updates the bounded chat log, without scanning, saving or broadcasting the stream. Commands save and notify only when accepted or when they produce an engine event. Stream-history reads are cached and invalidated after `saveStream`.
+
+Chat events carry `at` in epoch milliseconds: mock sources capture the arrival time before queuing, and the future live adapter must use EventSub `metadata.message_timestamp`. The engine uses that timestamp for windows, cooldowns and offsets. Marker/clip/chat requests run in a background job after notifying clients; `delivery:"processing"` is a durable per-star lock. Results are merged back into the current stream by ID, so a slow request cannot overwrite new joiners or resurrect a moderated star. Offline drains delivery before resolving the archive and exporting the final card. Commands already queued ahead of offline are processed first.
+
 The single server owns all stream mutations. Closed stars retain delivery status, marker position, original offset, clip ID and errors. Restart resumes active streams and pending closes. A delivery interrupted during an external call is flagged instead of blindly replayed; exactly-once remote writes across a crash cannot be guaranteed by a local JSON store. Failed markers do not discard stars or block clip/chat processing. Clip attempts are capped at 20 per stream.
 
-Reasons are NFKC-normalized; URLs, mentions and control characters are stripped; whitespace is collapsed; blocklist matches hide the reason; the remaining string is limited to 40 Unicode code points. Names and reasons are escaped/text-rendered on every page. Sub/follower eligibility and names-only are configurable in the dashboard; mock chat has role/eligibility toggles. Automatic names-only is disabled in mock and uses the configurable viewer threshold in live mode.
+Reasons are NFKC-normalized; URLs, mentions and control characters are stripped; whitespace is collapsed; whole-word/phrase blocklist matches hide the reason (Unicode letters, combining marks, numbers and connector punctuation are word characters; `ass` does not match `class`); the remaining string is limited to 40 Unicode code points. Names and reasons are escaped/text-rendered on every page. Subscriber eligibility and names-only are configurable in the dashboard; mock chat has role/eligibility toggles. Automatic names-only is disabled in mock and uses the configurable viewer threshold in live mode.
 
 ## Task 2: real Twitch connection
 
@@ -112,9 +120,9 @@ Reasons are NFKC-normalized; URLs, mentions and control characters are stripped;
 
 1. Create an app at [dev.twitch.tv/console](https://dev.twitch.tv/console). Register `http://localhost:3000/auth/callback` (or your configured port). Add its client ID/secret to the ignored `.env` when Task 2 implements the real adapter.
 2. Implement OAuth Authorization Code, CSRF state validation, secure token persistence, refresh and disconnect/revoke.
-3. Request `user:read:chat`, `user:write:chat`, `channel:manage:broadcast`, `clips:edit`. Verify any extra eligibility lookup permissions for followers/subscribers.
+3. Request `user:read:chat`, `user:write:chat`, `channel:manage:broadcast`, `clips:edit`. Followers-only is intentionally omitted to avoid requesting an additional scope.
 4. Implement EventSub WebSocket welcome/subscription, chat/online/offline events, keepalive/reconnect/revocation and durable duplicate-event handling.
-5. Implement Helix marker/clip/chat/archive calls, timeout/backoff/rate limits and 401 refresh. Match archive to this stream and poll after offline until the VOD is ready.
+5. Implement Helix marker/clip/chat/archive calls, timeout/backoff/rate limits and 401 refresh. Match `video.stream_id === stream.id` (not just channel or start time) and poll after offline until the VOD is ready.
 6. Wire real channel title, start time, viewer count and roles. Test non-Affiliate accounts, VOD-off fallback and real clip embeds (correct `parent`, autoplay restrictions and fallback behavior).
 
 Mock mode does not validate real Twitch APIs, credentials, permissions, media playback or production hosting. `PUBLIC_URL` only controls the address printed on cards; public hosting/authentication is a separate deployment concern.

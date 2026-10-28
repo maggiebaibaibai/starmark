@@ -281,16 +281,16 @@ describe("chat throughput and delivery scheduling", () => {
   });
   it("processes an already queued join before offline closes the window", async () => {
     const { service, setTime } = await setup();
-    await service.message({id:"a",name:"a"},"!star");
-    let release!:()=>void;
-    const gate = new Promise<void>(r=>release=r);
-    const held=service.run(()=>gate);
+    await service.message({ id: "a", name: "a" }, "!star");
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const held = service.run(() => gate);
     setTime(1_014_999);
-    const join=service.message({id:"b",name:"b"},"!star");
-    const ended=service.end();
-    release(); await held;
+    const join = service.message({ id: "b", name: "b" }, "!star");
+    const ended = service.end();
+    release();
+    await held;
     expect((await join).accepted).toBe(true);
     expect((await ended).stars[0]!.lighters).toHaveLength(2);
   });
-
 });
