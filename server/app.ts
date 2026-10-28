@@ -212,6 +212,8 @@ export async function createApp(options: AppOptions = {}) {
   }
   const unsubscribe = adapter.subscribe(async (event) => {
     if (event.type === "stream.online") {
+      if (event.id && (await store.stream(event.id))?.endedAt !== undefined)
+        return;
       if (service.active?.id === event.id)
         await service.updateStream({ ...event, type: "stream.update" });
       else {

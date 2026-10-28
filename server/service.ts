@@ -92,6 +92,10 @@ export class Service {
     )
       this.active = undefined;
     if (!this.active) delete this.state.activeStreamId;
+    this.recoverInterruptedDelivery();
+    await this.persist();
+  }
+  private recoverInterruptedDelivery() {
     for (const star of this.active?.stars ?? [])
       if (star.delivery === "processing") {
         star.delivery = "done";
@@ -99,7 +103,6 @@ export class Service {
           "A star delivery was interrupted. Review its marker/clip in the moderation queue.",
         );
       }
-    await this.persist();
   }
   /** Serialize state/file mutations only. Never await external I/O jobs inside this queue. */
   run<T>(action: () => Promise<T>): Promise<T> {
@@ -160,9 +163,15 @@ export class Service {
   }
   start(event: Extract<TwitchEvent, { type: "stream.online" }>) {
     return this.run(async () => {
+      if (event.id && this.active?.id === event.id) return this.active;
       if (this.active)
         throw new ValidationError("A stream is already live", 409);
-      this.active = {
+      const saved = event.id ? await this.store.stream(event.id) : undefined;
+      // Late/replayed online events must never erase or reopen a completed starmap.
+      if (saved?.endedAt !== undefined) return saved;
+      if (saved && saved.mock !== (this.twitch.mode === "mock"))
+        throw new ValidationError("Stream belongs to a different mode", 409);
+      this.active = saved ?? {
         id: event.id ?? `mock-${randomUUID()}`,
         startedAt: event.startedAt ?? this.now(),
         channel: this.channel,
@@ -175,6 +184,7 @@ export class Service {
         warnings: [],
         mock: this.twitch.mode === "mock",
       };
+      if (saved) this.recoverInterruptedDelivery();
       this.state.activeStreamId = this.active.id;
       await this.persist();
       this.chat("eventsub", "stream.online · a new sky is open", "system");
@@ -466,7 +476,7 @@ export class Service {
   }
   updateStream(event: Extract<TwitchEvent, { type: "stream.update" }>) {
     return this.run(async () => {
-      if (!this.active) return;
+      if (!this.active || (event.id && event.id !== this.active.id)) return;
       if (
         event.viewerCount !== undefined &&
         (!Number.isFinite(event.viewerCount) || event.viewerCount < 0)

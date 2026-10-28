@@ -12,6 +12,7 @@ import {
 import type { Star, Stream } from "../server/engine.js";
 import { Service } from "../server/service.js";
 import { Store } from "../server/store.js";
+import { createApp } from "../server/app.js";
 
 // These are synthetic credentials; this test never loads .env or opens a network socket.
 const config = {
@@ -23,6 +24,7 @@ const config = {
 const roots: string[] = [];
 const adapters: LiveTwitch[] = [];
 const services: Service[] = [];
+const servers: Awaited<ReturnType<typeof createApp>>[] = [];
 class FakeSocket extends EventEmitter {
   closed = false;
   close() {
@@ -63,6 +65,7 @@ class FakeSocket extends EventEmitter {
 const response = (body: unknown, status = 200, headers?: HeadersInit) =>
   new Response(JSON.stringify(body), { status, headers });
 afterEach(async () => {
+  for (const server of servers.splice(0)) await server.close();
   for (const service of services.splice(0)) await service.dispose();
   for (const adapter of adapters.splice(0)) await adapter.dispose();
   vi.restoreAllMocks();
@@ -494,4 +497,66 @@ it("does not resurrect credentials or change disconnected status when a refresh 
   await expect(stat(join(t.root, "twitch-tokens.json"))).rejects.toMatchObject({
     code: "ENOENT",
   });
+});
+
+async function liveApp() {
+  const t = await setup();
+  const server = await createApp({
+    adapter: t.adapter,
+    dataDir: t.root,
+    tick: false,
+    clock: t.options.clock,
+  });
+  servers.push(server);
+  await server.listen(0);
+  await t.connect();
+  t.sockets[0]!.welcome();
+  await vi.waitFor(() => expect(t.adapter.status().state).toBe("connected"));
+  return { ...t, server };
+}
+it("empty polls after online cannot end the stream and later metadata polls cannot overwrite its stars", async () => {
+  const t = await liveApp();
+  const end = vi.spyOn(t.server.service, "end");
+  t.sockets[0]!.message("notification", {
+    subscription: { type: "stream.online" },
+    event: {
+      broadcaster_user_id: "123",
+      id: "live-stream",
+      started_at: "2026-10-28T12:00:00Z",
+    },
+  });
+  await vi.waitFor(() =>
+    expect(t.server.service.active?.id).toBe("live-stream"),
+  );
+  await t.server.service.message({ id: "a", name: "a" }, "!star saved");
+  await vi.waitFor(() => expect(t.calls("/helix/streams")).toHaveLength(2));
+  t.setHandler((url) =>
+    url.pathname === "/helix/streams"
+      ? response({
+          data: [
+            {
+              id: "live-stream",
+              title: "Updated",
+              viewer_count: 42,
+              started_at: "2026-10-28T12:00:00Z",
+            },
+          ],
+        })
+      : undefined,
+  );
+  t.sockets[0]!.message("session_reconnect", {
+    session: {
+      reconnect_url: "wss://eventsub.wss.twitch.tv/ws?reconnect=test",
+    },
+  });
+  t.sockets[1]!.welcome("migrated");
+  await vi.waitFor(() =>
+    expect(t.server.service.active?.title).toBe("Updated"),
+  );
+  expect(end).not.toHaveBeenCalled();
+  expect(t.events.filter((e) => e.type === "stream.offline")).toHaveLength(0);
+  expect(t.events.filter((e) => e.type === "stream.online")).toHaveLength(1);
+  const saved = await t.server.store.stream("live-stream");
+  expect(saved!.stars).toHaveLength(1);
+  expect(saved!.endedAt).toBeUndefined();
 });

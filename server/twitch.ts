@@ -20,7 +20,7 @@ export type TwitchEvent =
       viewerCount?: number;
     }
   | { type: "stream.offline" }
-  | { type: "stream.update"; title?: string; viewerCount?: number }
+  | { type: "stream.update"; id?: string; title?: string; viewerCount?: number }
   | { type: "connection.state"; status: ConnectionStatus }
   | {
       type: "channel.chat.message";
@@ -202,7 +202,6 @@ export class LiveTwitch implements TwitchAdapter {
   private maintaining = false;
   private validatedAt = 0;
   private streamCheckedAt = 0;
-  private knownStream?: string;
   private reconnectAttempts = 0;
   private seen = new Set<string>();
   private events: Promise<void> = Promise.resolve();
@@ -544,7 +543,6 @@ export class LiveTwitch implements TwitchAdapter {
   private startTransport() {
     this.stopped = false;
     this.reconnectAttempts = 0;
-    this.knownStream = undefined;
     this.openSocket();
     this.maintenance = setInterval(() => {
       void this.maintain();
@@ -578,25 +576,18 @@ export class LiveTwitch implements TwitchAdapter {
     );
     const stream = result.data[0];
     this.streamCheckedAt = this.now();
-    this.queueEvent(async () => {
-      if (stream && this.knownStream === stream.id) {
-        await this.emit({
+    // Helix can lag EventSub. Polls enrich metadata; only EventSub owns lifecycle.
+    if (stream)
+      this.queueEvent(() =>
+        this.emit({
           type: "stream.update",
-          title: stream.title,
-          viewerCount: stream.viewer_count,
-        });
-      } else if (stream) {
-        await this.emit({
-          type: "stream.online",
           id: stream.id,
-          startedAt: Date.parse(stream.started_at),
           title: stream.title,
           viewerCount: stream.viewer_count,
-        });
-      } else await this.emit({ type: "stream.offline" });
-      this.knownStream = stream?.id;
-    });
+        }),
+      );
   }
+
   private openSocket(url = eventsub, transfer = false) {
     if (this.stopped || !this.tokens) return;
     const old = this.socket;
@@ -745,11 +736,9 @@ export class LiveTwitch implements TwitchAdapter {
         startedAt: Date.parse(event.started_at),
         viewerCount: 0,
       });
-      this.knownStream = event.id;
       await this.syncStream();
     } else if (type === "stream.offline") {
       await this.emit({ type });
-      this.knownStream = undefined;
     }
   }
   private stopTransport() {

@@ -341,3 +341,38 @@ it.each(["lock", "marker", "echo"])(
     ).toBe("done");
   },
 );
+
+it("resumes an existing stream by ID and never overwrites or reopens an ended stream", async () => {
+  const { service, twitch, root } = await setup();
+  await service.message({ id: "a", name: "a" }, "!star saved");
+  const saved = structuredClone(service.active!);
+  expect(await service.start({ type: "stream.online", id: saved.id })).toEqual(
+    saved,
+  );
+  await service.dispose();
+  await service.store.saveState({
+    ...service.state,
+    activeStreamId: undefined,
+  });
+  const resumed = new Service(
+    new Store(root),
+    twitch,
+    "test",
+    () => {},
+    () => 1_000_000,
+  );
+  services.push(resumed);
+  await resumed.init();
+  expect(await resumed.start({ type: "stream.online", id: saved.id })).toEqual(
+    saved,
+  );
+  expect(await resumed.store.stream(saved.id)).toEqual(saved);
+  const ended = await resumed.end();
+  const writes = vi.spyOn(resumed.store, "saveStream");
+  expect(await resumed.start({ type: "stream.online", id: saved.id })).toEqual(
+    ended,
+  );
+  expect(resumed.active).toBeUndefined();
+  expect(writes).not.toHaveBeenCalled();
+  expect(await resumed.store.stream(saved.id)).toEqual(ended);
+});
