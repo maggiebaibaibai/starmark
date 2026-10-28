@@ -1,11 +1,26 @@
-import type { Star, Stream, User } from './engine.js';
+import type { Star, Stream, User } from "./engine.js";
 export type TwitchEvent =
-  | { type: 'stream.online'; id?: string; startedAt?: number; title?: string; viewerCount?: number }
-  | { type: 'stream.offline' }
-  | { type: 'channel.chat.message'; user: User; text: string; messageId: string };
+  | {
+      type: "stream.online";
+      id?: string;
+      startedAt?: number;
+      title?: string;
+      viewerCount?: number;
+    }
+  | { type: "stream.offline" }
+  | {
+      type: "channel.chat.message";
+      user: User;
+      text: string;
+      messageId: string;
+    };
 export interface TwitchAdapter {
-  readonly mode: 'mock' | 'live';
-  createMarker(stream: Stream, star: Star, description: string): Promise<{ id: string; positionSeconds: number }>;
+  readonly mode: "mock" | "live";
+  createMarker(
+    stream: Stream,
+    star: Star,
+    description: string,
+  ): Promise<{ id: string; positionSeconds: number }>;
   createClip(stream: Stream, star: Star): Promise<{ id: string }>;
   sendChat(stream: Stream, text: string): Promise<void>;
   getArchiveVod(stream: Stream): Promise<{ id: string } | undefined>;
@@ -13,30 +28,53 @@ export interface TwitchAdapter {
   dispose(): Promise<void>;
 }
 export class TwitchError extends Error {
-  constructor(message: string, public status: number) { super(message); }
+  constructor(
+    message: string,
+    public status: number,
+  ) {
+    super(message);
+  }
 }
 export class MockTwitch implements TwitchAdapter {
-  readonly mode = 'mock' as const;
+  readonly mode = "mock" as const;
   vodSaving = true;
   calls: { method: string; starId?: string; text?: string }[] = [];
   private listeners = new Set<(event: TwitchEvent) => Promise<void>>();
   async createMarker(_stream: Stream, star: Star, description: string) {
-    this.calls.push({ method: 'createMarker', starId: star.id, text: description });
-    if (!this.vodSaving) throw new TwitchError('VOD saving is off', 404);
-    return { id: `mock-marker-${star.id}`, positionSeconds: star.offsetSeconds + 15 };
+    this.calls.push({
+      method: "createMarker",
+      starId: star.id,
+      text: description,
+    });
+    if (!this.vodSaving) throw new TwitchError("VOD saving is off", 404);
+    return {
+      id: `mock-marker-${star.id}`,
+      positionSeconds: star.offsetSeconds + 15,
+    };
   }
   async createClip(_stream: Stream, star: Star) {
-    this.calls.push({ method: 'createClip', starId: star.id });
+    this.calls.push({ method: "createClip", starId: star.id });
     return { id: `mock-clip-${star.id}` };
   }
-  async sendChat(_stream: Stream, text: string) { this.calls.push({ method: 'sendChat', text }); }
+  async sendChat(_stream: Stream, text: string) {
+    this.calls.push({ method: "sendChat", text });
+  }
   async getArchiveVod(stream: Stream) {
-    this.calls.push({ method: 'getArchiveVod' });
+    this.calls.push({ method: "getArchiveVod" });
     return this.vodSaving ? { id: `mock-vod-${stream.id}` } : undefined;
   }
-  subscribe(listener: (event: TwitchEvent) => Promise<void>) { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
-  async emit(event: TwitchEvent) { for (const listener of this.listeners) await listener(event); }
-  async dispose() { this.listeners.clear(); }
+  subscribe(listener: (event: TwitchEvent) => Promise<void>) {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+  async emit(event: TwitchEvent) {
+    for (const listener of this.listeners) await listener(event);
+  }
+  async dispose() {
+    this.listeners.clear();
+  }
 }
 /** Task 2 implementation checklist (never silently connect in Task 1):
  * OAuth authorization code + CSRF state; encrypted tokens/refresh; localhost callback.
