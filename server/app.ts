@@ -149,20 +149,15 @@ export async function createApp(options: AppOptions = {}) {
       });
       return;
     }
-    // Live exports are regenerated; completed streams use their persisted export.
-    const path = store.pngPath(id);
-    try {
-      if (stream.endedAt === undefined) throw new Error("live");
-      await access(path);
-    } catch {
-      await renderer.render(id, origin);
-    }
+    const path = await renderer.render(id, origin, {
+      live: stream.endedAt === undefined,
+    });
     res.type("png").sendFile(path, { dotfiles: "allow" });
   });
   async function endAndExport() {
     stopGenerator();
     const stream = await service.end();
-    await renderer.render(stream.id, origin);
+    await renderer.render(stream.id, origin, { force: true });
     broadcast({ type: "exported", id: stream.id });
     return stream;
   }

@@ -1,5 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+  stat,
+  utimes,
+} from "node:fs/promises";
 import { resolve } from "node:path";
 import { build } from "esbuild";
 import { WebSocket } from "ws";
@@ -25,7 +33,8 @@ async function post(path: string, data: object = {}) {
 beforeAll(async () => {
   await mkdir(resolve(".cache/tests"), { recursive: true });
   await mkdir(resolve(".cache/tmp"), { recursive: true });
-  process.env.TMPDIR = resolve(".cache/tmp");
+  process.env.TMPDIR = resolve(".cache/tmp/e2e-browser");
+  await mkdir(process.env.TMPDIR, { recursive: true });
   process.env.PLAYWRIGHT_BROWSERS_PATH = resolve(".cache/ms-playwright");
   await build({
     entryPoints: ["web/app.ts"],
@@ -72,6 +81,13 @@ describe("end-to-end mock run", () => {
     await page.getByRole("button", { name: "Start mock stream" }).click();
     await page.waitForFunction(
       () => document.getElementById("liveState")?.textContent === "● LIVE",
+    );
+    await page.locator("#message").fill("ordinary chat stays lightweight");
+    await page.getByRole("button", { name: "Send to chat" }).click();
+    await page.waitForFunction(() =>
+      document
+        .getElementById("chat")
+        ?.textContent?.includes("ordinary chat stays lightweight"),
     );
     const active = (await (await fetch(base + "/api/state")).json())
       .active as Stream;
@@ -194,8 +210,8 @@ describe("end-to-end mock run", () => {
     await writeFile(".cache/export-card.png", png);
     const pngResponse = await fetch(base + `/card/${active.id}.png`);
     expect(pngResponse.status).toBe(200);
-      expect(pngResponse.headers.get("content-type")).toContain("image/png");
-      expect(Buffer.from(await pngResponse.arrayBuffer())).toEqual(png);
+    expect(pngResponse.headers.get("content-type")).toContain("image/png");
+    expect(Buffer.from(await pngResponse.arrayBuffer())).toEqual(png);
     const adapter = server.adapter as MockTwitch;
     for (const method of ["createMarker", "createClip", "sendChat"])
       expect(adapter.calls.filter((c) => c.method === method)).toHaveLength(8);
@@ -269,6 +285,48 @@ describe("end-to-end mock run", () => {
     ws.close();
     await Promise.all([page.close(), overlay.close(), co.close()]);
   }, 60000);
+  it("reuses live PNGs for 10s, refreshes expired images and forces offline export without changing TMPDIR", async () => {
+    const tmpBefore = process.env.TMPDIR;
+    const dataDir = await mkdtemp(resolve(".cache/tests/png-cache-"));
+    const local = await createApp({
+      dataDir,
+      tick: false,
+      clock: () => Date.UTC(2026, 9, 28, 20),
+    });
+    try {
+      const origin = await local.listen(0),
+        stream = await local.service.start({ type: "stream.online" });
+      const url = origin + `/card/${stream.id}.png`,
+        file = local.store.pngPath(stream.id);
+      const first = Buffer.from(await (await fetch(url)).arrayBuffer()),
+        firstTime = (await stat(file)).mtimeMs;
+      await local.service.advance(60_000);
+      await local.service.message(
+        { id: "new", name: "new" },
+        "!star newly added",
+      );
+      expect(Buffer.from(await (await fetch(url)).arrayBuffer())).toEqual(
+        first,
+      );
+      expect((await stat(file)).mtimeMs).toBe(firstTime);
+      const old = new Date(Date.now() - 11_000);
+      await utimes(file, old, old);
+      const changed = Buffer.from(await (await fetch(url)).arrayBuffer());
+      expect(changed).not.toEqual(first);
+      const refreshed = (await stat(file)).mtimeMs;
+      await local.service.advance(60_000);
+      const ended = await fetch(origin + "/api/mock/end", { method: "POST" });
+      expect(ended.status).toBe(200);
+      expect((await stat(file)).mtimeMs).toBeGreaterThan(refreshed);
+      expect(Buffer.from(await (await fetch(url)).arrayBuffer())).not.toEqual(
+        changed,
+      );
+      expect(process.env.TMPDIR).toBe(tmpBefore);
+    } finally {
+      await local.close();
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  }, 30000);
   it("rejects malformed requests and path traversal without creating files", async () => {
     const bad = await fetch(base + "/api/mock/chat", {
       method: "POST",
