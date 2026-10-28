@@ -4,3 +4,8 @@ data/
 *.log
 .DS_Store
 .codex-session
+dist/
+.cache/
+coverage/
+.env.*
+!.env.example
