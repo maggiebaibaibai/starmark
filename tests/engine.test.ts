@@ -162,15 +162,17 @@ describe("pure star engine", () => {
         .accepted,
     ).toBe(false);
     expect(
-      command(fresh(), { ...user("a"), isFollower: true }, "!star", 0, {
+      command(fresh(), { ...user("a"), isSubscriber: true }, "!star", 0, {
         ...defaults,
-        followersOnly: true,
+        subsOnly: true,
       }).accepted,
     ).toBe(true);
     expect(star({ ...fresh(), endedAt: 0 }, "a", 1).accepted).toBe(false);
   });
   it("matches blocklist words at Unicode boundaries without hiding substrings", () => {
-    expect(sanitizeReason("the class was wild", ["ass"])).toBe("the class was wild");
+    expect(sanitizeReason("the class was wild", ["ass"])).toBe(
+      "the class was wild",
+    );
     expect(sanitizeReason("ASS!", ["ass"])).toBe("");
     expect(sanitizeReason("pass ass", ["ass"])).toBe("");
     expect(sanitizeReason("élan", ["lan"])).toBe("élan");
@@ -182,5 +184,4 @@ describe("pure star engine", () => {
     expect(sanitizeReason("これは猫", ["猫"])).toBe("これは猫");
     expect(sanitizeReason("猫！", ["猫"])).toBe("");
   });
-
 });

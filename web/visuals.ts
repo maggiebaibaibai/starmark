@@ -1,3 +1,4 @@
+export type { ChatLine } from "../server/service.js";
 import type { Service } from "../server/service.js";
 export type Snapshot = Awaited<ReturnType<Service["snapshot"]>>;
 export {

@@ -243,5 +243,10 @@ export function overlayPage() {
   }
   requestAnimationFrame(animate);
   setInterval(renderBand, 1000);
-  return update;
+  return {
+    update,
+    chat: (line: import("./visuals.js").ChatLine) => {
+      if (state) state.messages = [...state.messages, line].slice(-40);
+    },
+  };
 }

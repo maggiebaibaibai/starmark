@@ -1,4 +1,11 @@
-import { $, api, type Snapshot, type Star, type Stream } from "./visuals.js";
+import {
+  $,
+  api,
+  type Snapshot,
+  type Star,
+  type Stream,
+  type ChatLine,
+} from "./visuals.js";
 import { cardPage } from "./card.js";
 import { overlayPage } from "./overlay.js";
 import { coldopenPage } from "./coldopen.js";
@@ -13,14 +20,19 @@ async function main() {
       state: Snapshot,
       events?: { type: string; star: Star }[],
     ) => void = () => {},
+    chat: (line: ChatLine) => void = () => {},
     play: ((stream?: Stream) => void) | undefined,
     connection: (ok: boolean) => void = () => {},
     notice: (s: string, error?: boolean) => void = () => {};
-  if (path === "/overlay") update = overlayPage();
-  else if (path === "/coldopen") play = coldopenPage();
+  if (path === "/overlay") {
+    const overlay = overlayPage();
+    update = overlay.update;
+    chat = overlay.chat;
+  } else if (path === "/coldopen") play = coldopenPage();
   else {
     const dashboard = dashboardPage();
     update = dashboard.update;
+    chat = dashboard.chat;
     connection = dashboard.connection;
     notice = dashboard.notice;
   }
@@ -45,7 +57,10 @@ async function main() {
         if (data.type === "state" && data.sequence >= sequence) {
           sequence = data.sequence;
           update(data, data.events);
-        } else if (data.type === "coldopen") play?.(data.previous);
+        } else if (data.type === "chat") chat(data.line);
+        else if (data.type === "connection.state")
+          notice(`Adapter ${data.status.state}`);
+        else if (data.type === "coldopen") play?.(data.previous);
         else if (data.type === "error") notice(data.message, true);
       } catch (error) {
         notice(

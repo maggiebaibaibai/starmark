@@ -9,11 +9,13 @@ import {
   totalLighters,
   type EngineEvent,
   type Settings,
+  type Star,
   type Stream,
   type User,
 } from "./engine.js";
 import { Store, type SavedState } from "./store.js";
 import { TwitchError, type TwitchAdapter, type TwitchEvent } from "./twitch.js";
+import { ValidationError } from "./errors.js";
 export interface ChatLine {
   at: number;
   name: string;
@@ -27,25 +29,41 @@ export class Service {
   private pending: Promise<unknown> = Promise.resolve();
   private seenMessages = new Set<string>();
   private sequence = 0;
+  private streamCache?: Promise<Stream[]>;
+  private unsubscribeCache: () => void;
+  private deliveryJob?: Promise<void>;
+  private deliveryFailure?: unknown;
+  private ending?: Promise<Stream>;
+  private closing = false;
   constructor(
     readonly store: Store,
     readonly twitch: TwitchAdapter,
     readonly channel: string,
     readonly publish: (event: object) => void,
     private clock = Date.now,
-  ) {}
+  ) {
+    this.unsubscribeCache = store.onStreamSaved(() => {
+      this.streamCache = undefined;
+    });
+  }
   now() {
     return this.clock() + this.state.mockOffset;
   }
   async init() {
     await this.store.init();
     this.state = await this.store.state();
-    this.state.settings = { ...defaults, ...this.state.settings };
+    // Pick supported settings so old followersOnly preferences do not survive migration.
+    this.state.settings = Object.fromEntries(
+      Object.entries(defaults).map(([key, value]) => [
+        key,
+        this.state.settings[key as keyof Settings] ?? value,
+      ]),
+    ) as unknown as Settings;
+    if (this.twitch.mode === "live") this.state.mockOffset = 0;
     if (this.state.activeStreamId)
       this.active = await this.store.stream(this.state.activeStreamId);
     if (this.active?.endedAt !== undefined) this.active = undefined;
     if (!this.active) delete this.state.activeStreamId;
-    // An interrupted external write is ambiguous: do not duplicate remote side effects.
     for (const star of this.active?.stars ?? [])
       if (star.delivery === "processing") {
         star.delivery = "done";
@@ -55,6 +73,7 @@ export class Service {
       }
     await this.persist();
   }
+  /** Serialize state/file mutations only. Never await external I/O jobs inside this queue. */
   run<T>(action: () => Promise<T>): Promise<T> {
     const next = this.pending.then(action);
     this.pending = next.catch(() => undefined);
@@ -64,19 +83,32 @@ export class Service {
     if (this.active && !this.active.warnings.includes(text))
       this.active.warnings.push(text);
   }
-  private chat(name: string, text: string, kind: ChatLine["kind"]) {
-    this.messages.push({ at: this.now(), name, text, kind });
+  private chat(
+    name: string,
+    text: string,
+    kind: ChatLine["kind"],
+    at = this.now(),
+  ) {
+    const line = { at, name, text, kind };
+    this.messages.push(line);
     this.messages = this.messages.slice(-40);
+    return line;
   }
   private async persist() {
     if (this.active) await this.store.saveStream(this.active);
     await this.store.saveState(this.state);
   }
   async snapshot() {
-    const streams = await this.store.streams();
+    const streams = await (this.streamCache ??= this.store
+      .streams()
+      .catch((error) => {
+        this.streamCache = undefined;
+        throw error;
+      }));
     return {
       now: this.now(),
       mode: this.twitch.mode,
+      connection: this.twitch.status(),
       settings: this.state.settings,
       active: this.active,
       previous: streams.find((s) => s.endedAt !== undefined),
@@ -97,155 +129,313 @@ export class Service {
     this.sequence++;
     this.publish({ type: "state", ...(await this.snapshot()), events });
   }
-  async start(event: Extract<TwitchEvent, { type: "stream.online" }>) {
-    if (this.active) throw new Error("A stream is already live");
-    const startedAt = event.startedAt ?? this.now();
-    this.active = {
-      id: event.id ?? `mock-${randomUUID()}`,
-      startedAt,
-      channel: this.channel,
-      title: event.title?.trim().slice(0, 140) || "no hints, final boss",
-      viewerCount: event.viewerCount ?? 32,
-      stars: [],
-      cooldowns: {},
-      sequence: 0,
-      clipAttempts: 0,
-      warnings: [],
-      mock: this.twitch.mode === "mock",
-    };
-    this.state.activeStreamId = this.active.id;
-    await this.persist();
-    this.chat("eventsub", "stream.online · a new sky is open", "system");
-    await this.notify();
-    this.publish({
-      type: "coldopen",
-      previous: (await this.snapshot()).previous,
+  start(event: Extract<TwitchEvent, { type: "stream.online" }>) {
+    return this.run(async () => {
+      if (this.active)
+        throw new ValidationError("A stream is already live", 409);
+      this.active = {
+        id: event.id ?? `mock-${randomUUID()}`,
+        startedAt: event.startedAt ?? this.now(),
+        channel: this.channel,
+        title: event.title?.trim().slice(0, 140) || "no hints, final boss",
+        viewerCount: event.viewerCount ?? 32,
+        stars: [],
+        cooldowns: {},
+        sequence: 0,
+        clipAttempts: 0,
+        warnings: [],
+        mock: this.twitch.mode === "mock",
+      };
+      this.state.activeStreamId = this.active.id;
+      await this.persist();
+      this.chat("eventsub", "stream.online · a new sky is open", "system");
+      await this.notify();
+      this.publish({
+        type: "coldopen",
+        previous: (await this.snapshot()).previous,
+      });
+      return this.active;
     });
-    return this.active;
+  }
+  private scheduleDelivery() {
+    if (this.deliveryJob) return;
+    if (this.deliveryFailure) return;
+    this.deliveryJob = this.deliver()
+      .catch((error) => {
+        this.deliveryFailure = error;
+        this.publish({
+          type: "error",
+          message: "Star delivery could not be saved. Check server storage.",
+        });
+      })
+      .finally(() => {
+        this.deliveryJob = undefined;
+        if (
+          !this.deliveryFailure &&
+          this.active?.stars.some((s) => s.delivery === "pending")
+        )
+          this.scheduleDelivery();
+      });
+  }
+  /** Called outside run(), e.g. on offline or shutdown; normal chat never waits here. */
+  async waitForDelivery() {
+    while (this.deliveryJob) await this.deliveryJob;
+    if (this.deliveryFailure) throw this.deliveryFailure;
+  }
+  private async patchDelivery(
+    streamId: string,
+    starId: string,
+    patch: (star: Star) => void,
+    notify = false,
+  ) {
+    return this.run(async () => {
+      if (this.active?.id !== streamId) return false;
+      const star = this.active.stars.find((s) => s.id === starId);
+      if (!star) return false; // A moderator removed it while the request was in flight.
+      patch(star);
+      await this.store.saveStream(this.active);
+      if (notify) await this.notify();
+      return true;
+    });
   }
   private async deliver() {
-    if (!this.active) return;
-    const stream = this.active;
-    for (const star of stream.stars.filter((s) => s.delivery === "pending")) {
-      star.delivery = "processing";
-      await this.persist();
+    for (;;) {
+      const work = await this.run(async () => {
+        const stream = this.active;
+        const star = stream?.stars.find((s) => s.delivery === "pending");
+        if (!stream || !star) return undefined;
+        star.delivery = "processing"; // Durable lock before any external call.
+        const makeClip = star.lighters.length >= 3 && stream.clipAttempts < 20;
+        if (makeClip) stream.clipAttempts++;
+        await this.store.saveStream(stream);
+        return {
+          stream: structuredClone(stream),
+          star: structuredClone(star),
+          makeClip,
+        };
+      });
+      if (!work) return;
+      const { stream, star, makeClip } = work;
+      let marker: Star["marker"],
+        markerError: string | undefined,
+        vodOff = false;
       try {
-        star.marker = await this.twitch.createMarker(
+        marker = await this.twitch.createMarker(
           stream,
           star,
           markerDescription(star),
         );
       } catch (error) {
-        star.markerError =
-          error instanceof Error ? error.message : "Marker failed";
-        this.warn(
-          error instanceof TwitchError && error.status === 404
-            ? "VOD saving is off. Enable Creator Dashboard → Settings → Stream → Store past broadcasts. Cards use clips when no archive is available."
-            : `Marker failed: ${star.markerError}. The original stream offset is saved.`,
-        );
+        markerError = "Marker request failed";
+        vodOff = error instanceof TwitchError && error.status === 404;
       }
-      if (star.lighters.length >= 3 && stream.clipAttempts < 20) {
-        stream.clipAttempts++;
-        await this.persist();
+      if (
+        !(await this.patchDelivery(stream.id, star.id, (current) => {
+          current.marker = marker;
+          current.markerError = markerError;
+          if (markerError)
+            this.warn(
+              vodOff
+                ? "VOD saving is off. Enable Creator Dashboard → Settings → Stream → Store past broadcasts. Cards use clips when no archive is available."
+                : "Marker failed. The original stream offset is saved.",
+            );
+        }))
+      )
+        continue;
+      if (makeClip) {
+        let clipId: string | undefined, clipError: string | undefined;
         try {
-          star.clipId = (await this.twitch.createClip(stream, star)).id;
-        } catch (error) {
-          star.clipError =
-            error instanceof Error ? error.message : "Clip failed";
-          this.warn(`Clip failed: ${star.clipError}`);
+          clipId = (await this.twitch.createClip(stream, star)).id;
+        } catch {
+          clipError = "Clip request failed";
         }
+        if (
+          !(await this.patchDelivery(stream.id, star.id, (current) => {
+            current.clipId = clipId;
+            current.clipError = clipError;
+            if (clipError)
+              this.warn(
+                "Clip request failed. The original stream offset is saved.",
+              );
+          }))
+        )
+          continue;
       }
-      const echo = `⭐ @${star.owner.name} lit a star at ${clockTime(star.offsetSeconds)} · ${star.lighters.length} of you joined`;
+      // N includes the owner; marker +N-1 means the other viewers, not a different total.
+      const echo = `⭐ @${star.owner.name} lit a star at ${clockTime(star.offsetSeconds)} · ${star.lighters.length} of you`;
+      let echoError: string | undefined;
       try {
         await this.twitch.sendChat(stream, echo);
-        this.chat("starmark", echo, "bot");
-      } catch (error) {
-        star.echoError =
-          error instanceof Error ? error.message : "Chat echo failed";
-        this.warn(`Chat echo failed: ${star.echoError}`);
+      } catch {
+        echoError = "Chat echo request failed";
       }
-      star.delivery = "done";
-      await this.persist();
+      await this.patchDelivery(
+        stream.id,
+        star.id,
+        (current) => {
+          current.echoError = echoError;
+          current.delivery = "done";
+          if (echoError) this.warn("Chat echo request failed.");
+          else this.chat("starmark", echo, "bot");
+        },
+        true,
+      );
     }
   }
-  async tick() {
-    if (!this.active) return;
+  private async closeTick() {
+    if (!this.active || this.active.endedAt !== undefined || this.ending)
+      return;
     const result = closeDue(this.active, this.now(), this.state.settings);
     this.active = result.stream;
     if (
       result.events.length ||
       this.active.stars.some((s) => s.delivery === "pending")
     ) {
-      await this.deliver();
       await this.persist();
       await this.notify(result.events);
+      this.scheduleDelivery();
     }
   }
-  async message(user: User, text: string, messageId: string = randomUUID()) {
-    if (!this.active) throw new Error("Start a mock stream first");
-    if (this.seenMessages.has(messageId))
-      return { accepted: false, message: "Duplicate event ignored" };
-    this.seenMessages.add(messageId);
-    if (this.seenMessages.size > 10_000)
-      this.seenMessages.delete(this.seenMessages.values().next().value!);
-    this.chat(user.name, text, "viewer");
-    const result = command(
-      this.active,
-      user,
-      text,
-      this.now(),
-      this.state.settings,
-    );
-    this.active = result.stream;
-    await this.deliver();
-    await this.persist();
-    await this.notify(result.events);
-    return { accepted: result.accepted, message: result.message };
+  tick() {
+    return this.run(() => this.closeTick());
   }
-  async end() {
-    if (!this.active) throw new Error("No active stream");
-    const closed = closeDue(this.active, this.now(), this.state.settings, true);
-    this.active = closed.stream;
-    await this.deliver();
+  message(
+    user: User,
+    text: string,
+    messageId: string = randomUUID(),
+    at = this.now(),
+  ) {
+    // Default arguments capture mock arrival time BEFORE this message enters the queue.
+    return this.run(async () => {
+      if (!Number.isFinite(at))
+        throw new ValidationError("Invalid message timestamp");
+      if (this.seenMessages.has(messageId))
+        return { accepted: false, message: "Duplicate event ignored" };
+      this.seenMessages.add(messageId);
+      if (this.seenMessages.size > 10_000)
+        this.seenMessages.delete(this.seenMessages.values().next().value!);
+      const line = this.chat(user.name, text, "viewer", at);
+      if (!/^!(?:star|unstar)(?:\s|$)/i.test(text.trim())) {
+        this.publish({ type: "chat", line });
+        return { accepted: false, message: "Chat received" };
+      }
+      if (!this.active) throw new ValidationError("Start a stream first", 409);
+      if (this.closing) throw new ValidationError("Stream is ending", 409);
+      const result = command(this.active, user, text, at, this.state.settings);
+      if (result.accepted || result.events.length) {
+        this.active = result.stream;
+        await this.persist();
+        await this.notify(result.events);
+        this.scheduleDelivery();
+      } else this.publish({ type: "chat", line });
+      return { accepted: result.accepted, message: result.message };
+    });
+  }
+  end(): Promise<Stream> {
+    if (this.ending)
+      return Promise.reject(
+        new ValidationError("Stream is already ending", 409),
+      );
+    this.ending = this.finishStream().finally(() => {
+      this.ending = undefined;
+      this.closing = false;
+    });
+    return this.ending;
+  }
+  private async finishStream() {
+    const { id, endedAt } = await this.run(async () => {
+      if (!this.active) throw new ValidationError("No active stream", 409);
+      this.closing = true;
+      const closed = closeDue(
+        this.active,
+        this.now(),
+        this.state.settings,
+        true,
+      );
+      this.active = closed.stream;
+      await this.persist();
+      await this.notify(closed.events);
+      this.scheduleDelivery();
+      return { id: this.active.id, endedAt: this.active.endedAt ?? this.now() };
+    });
+    await this.waitForDelivery();
+    let vodId: string | undefined,
+      archiveFailed = false;
     try {
-      this.active.vodId = (await this.twitch.getArchiveVod(this.active))?.id;
-    } catch (error) {
-      this.warn(
-        `Archive lookup failed: ${error instanceof Error ? error.message : "unknown error"}`,
-      );
+      vodId = (await this.twitch.getArchiveVod(structuredClone(this.active!)))
+        ?.id;
+    } catch {
+      archiveFailed = true;
     }
-    if (!this.active.vodId)
-      this.warn(
-        "No archive found. Stars with saved clips remain playable; other stars keep their timestamp.",
-      );
-    this.active.endedAt = this.now();
-    const ended = this.active;
-    await this.store.saveStream(ended);
-    this.active = undefined;
-    delete this.state.activeStreamId;
-    await this.persist();
-    this.chat("eventsub", "stream.offline · your starmap is ready", "system");
-    await this.notify(closed.events);
-    return ended;
+    return this.run(async () => {
+      const ended = this.active!;
+      if (ended.id !== id)
+        throw new Error("Stream lifecycle changed during offline");
+      ended.endedAt = endedAt;
+      ended.vodId = vodId;
+      if (archiveFailed)
+        this.warn(
+          "Archive lookup failed. Retry when the archive is available.",
+        );
+      if (!vodId)
+        this.warn(
+          "No archive found. Stars with saved clips remain playable; other stars keep their timestamp.",
+        );
+      await this.store.saveStream(ended);
+      this.active = undefined;
+      delete this.state.activeStreamId;
+      await this.persist();
+      this.chat("eventsub", "stream.offline · your starmap is ready", "system");
+      await this.notify();
+      return ended;
+    });
   }
-  async advance(ms: number) {
-    this.state.mockOffset += ms;
-    await this.tick();
-    await this.persist();
-    await this.notify();
+  advance(ms: number) {
+    return this.run(async () => {
+      this.state.mockOffset += ms;
+      await this.closeTick();
+      await this.store.saveState(this.state);
+      await this.notify();
+    });
   }
-  async settings(settings: Settings) {
-    this.state.settings = settings;
-    await this.persist();
-    await this.notify();
+  settings(settings: Settings) {
+    return this.run(async () => {
+      this.state.settings = settings;
+      await this.persist();
+      await this.notify();
+    });
   }
-  async removeStar(id: string) {
-    if (!this.active) throw new Error("No active stream");
-    const star = this.active.stars.find((s) => s.id === id);
-    if (!star) throw new Error("Star not found");
-    this.active.stars = this.active.stars.filter((s) => s.id !== id);
-    await this.persist();
-    await this.notify([{ type: "removed", star }]);
+  updateStream(event: Extract<TwitchEvent, { type: "stream.update" }>) {
+    return this.run(async () => {
+      if (!this.active) return;
+      if (
+        event.viewerCount !== undefined &&
+        (!Number.isFinite(event.viewerCount) || event.viewerCount < 0)
+      )
+        throw new ValidationError("Invalid viewer count");
+      if (event.title !== undefined)
+        this.active.title = event.title.trim().slice(0, 140);
+      if (event.viewerCount !== undefined)
+        this.active.viewerCount = Math.floor(event.viewerCount);
+      await this.persist();
+      await this.notify();
+    });
+  }
+  removeStar(id: string) {
+    return this.run(async () => {
+      if (!this.active) throw new ValidationError("No active stream", 409);
+      const star = this.active.stars.find((s) => s.id === id);
+      if (!star) throw new ValidationError("Star not found", 404);
+      this.active.stars = this.active.stars.filter((s) => s.id !== id);
+      await this.persist();
+      await this.notify([{ type: "removed", star }]);
+    });
+  }
+  async dispose() {
+    await this.run(async () => {});
+    if (this.ending) await this.ending;
+    await this.waitForDelivery();
+    this.unsubscribeCache();
   }
   card(stream: Stream) {
     return {

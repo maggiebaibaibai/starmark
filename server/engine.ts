@@ -5,7 +5,6 @@ export interface Settings {
   gapMs: number;
   blocklist: string[];
   subsOnly: boolean;
-  followersOnly: boolean;
   namesOnly: boolean;
   namesOnlyThreshold: number;
 }
@@ -15,7 +14,6 @@ export const defaults: Settings = {
   gapMs: 20_000,
   blocklist: [],
   subsOnly: false,
-  followersOnly: false,
   namesOnly: false,
   namesOnlyThreshold: 500,
 };
@@ -25,7 +23,6 @@ export interface User {
   isMod?: boolean;
   isBroadcaster?: boolean;
   isSubscriber?: boolean;
-  isFollower?: boolean;
 }
 export interface Star {
   id: string;
@@ -87,7 +84,11 @@ export function sanitizeReason(raw: string, blocklist: string[] = []): string {
     const word = entry.trim().normalize("NFKC").toLocaleLowerCase();
     if (!word) continue;
     let from = 0;
-    for (let index = folded.indexOf(word, from); index >= 0; index = folded.indexOf(word, from)) {
+    for (
+      let index = folded.indexOf(word, from);
+      index >= 0;
+      index = folded.indexOf(word, from)
+    ) {
       const before = Array.from(folded.slice(0, index)).at(-1) ?? "";
       const after = Array.from(folded.slice(index + word.length))[0] ?? "";
       if (!wordCharacter.test(before) && !wordCharacter.test(after)) return "";
@@ -156,13 +157,6 @@ export function command(
     !user.isBroadcaster
   )
     return reply(false, "Subscribers only");
-  if (
-    settings.followersOnly &&
-    !user.isFollower &&
-    !user.isMod &&
-    !user.isBroadcaster
-  )
-    return reply(false, "Followers only");
   const open = stream.stars.find((star) => star.closedAt === undefined);
   if (open?.lighters.some((lighter) => lighter.id === user.id))
     return reply(false, "Already lighting this star");

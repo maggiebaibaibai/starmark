@@ -10,6 +10,13 @@ export interface SavedState {
 export const validId = (id: string) => /^[a-zA-Z0-9_-]{1,100}$/.test(id);
 export class Store {
   readonly root: string;
+  private savedListeners = new Set<() => void>();
+  onStreamSaved(listener: () => void) {
+    this.savedListeners.add(listener);
+    return () => {
+      this.savedListeners.delete(listener);
+    };
+  }
   constructor(root = resolve("data")) {
     this.root = root;
   }
@@ -54,6 +61,7 @@ export class Store {
   }
   async saveStream(stream: Stream) {
     await this.atomic(this.streamPath(stream.id), stream);
+    for (const listener of this.savedListeners) listener();
   }
   async streams() {
     const files = (await readdir(join(this.root, "streams"))).filter((name) =>

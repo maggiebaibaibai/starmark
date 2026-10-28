@@ -1,4 +1,10 @@
 import type { Star, Stream, User } from "./engine.js";
+export type ConnectionState =
+  "connected" | "disconnected" | "connecting" | "error";
+export interface ConnectionStatus {
+  mode: "mock" | "live";
+  state: ConnectionState;
+}
 export type TwitchEvent =
   | {
       type: "stream.online";
@@ -8,14 +14,22 @@ export type TwitchEvent =
       viewerCount?: number;
     }
   | { type: "stream.offline" }
+  | { type: "stream.update"; title?: string; viewerCount?: number }
+  | { type: "connection.state"; status: ConnectionStatus }
   | {
       type: "channel.chat.message";
       user: User;
       text: string;
       messageId: string;
+      /** Epoch ms: EventSub metadata.message_timestamp in live; captured arrival time in mock. */
+      at: number;
     };
 export interface TwitchAdapter {
   readonly mode: "mock" | "live";
+  status(): ConnectionStatus;
+  authUrl(): Promise<string | undefined>;
+  handleCallback(code: string, state: string): Promise<void>;
+  disconnect(): Promise<void>;
   createMarker(
     stream: Stream,
     star: Star,
@@ -23,6 +37,7 @@ export interface TwitchAdapter {
   ): Promise<{ id: string; positionSeconds: number }>;
   createClip(stream: Stream, star: Star): Promise<{ id: string }>;
   sendChat(stream: Stream, text: string): Promise<void>;
+  /** Only return an archive whose video.stream_id === stream.id. */
   getArchiveVod(stream: Stream): Promise<{ id: string } | undefined>;
   subscribe(listener: (event: TwitchEvent) => Promise<void>): () => void;
   dispose(): Promise<void>;
@@ -37,6 +52,21 @@ export class TwitchError extends Error {
 }
 export class MockTwitch implements TwitchAdapter {
   readonly mode = "mock" as const;
+  private connection: ConnectionState = "connected";
+  status(): ConnectionStatus {
+    return { mode: this.mode, state: this.connection };
+  }
+  async authUrl(): Promise<string | undefined> {
+    return undefined;
+  }
+  async handleCallback(_code: string, _state: string) {
+    this.connection = "connected";
+    await this.emit({ type: "connection.state", status: this.status() });
+  }
+  async disconnect() {
+    this.connection = "disconnected";
+    await this.emit({ type: "connection.state", status: this.status() });
+  }
   vodSaving = true;
   calls: { method: string; starId?: string; text?: string }[] = [];
   private listeners = new Set<(event: TwitchEvent) => Promise<void>>();
@@ -81,10 +111,10 @@ export class MockTwitch implements TwitchAdapter {
  * Scopes: user:read:chat user:write:chat channel:manage:broadcast clips:edit.
  * EventSub WS welcome/keepalive/reconnect/revocation and message-id deduplication;
  * channel.chat.message, stream.online, stream.offline. Resolve channel metadata,
- * follower/subscriber eligibility (add appropriate scopes if required), viewer count.
+ * subscriber eligibility and viewer count; followers-only is intentionally omitted.
  * Helix requests, 401 refresh, 429 backoff, bounded retries; never retry ambiguous
  * createClip/marker writes blindly. Markers use response position_seconds separately
- * from our original event offset. Archive lookup must match this stream's start,
+ * from our original event offset. Archive lookup must match video.stream_id === stream.id,
  * poll after offline until the archive appears. Clip embed parent from public host.
  * Non-Affiliate support; actionable VOD 404; disconnect/revoke and secret redaction.
  */

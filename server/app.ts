@@ -8,6 +8,7 @@ import { Store, validId } from "./store.js";
 import { Service } from "./service.js";
 import { MockTwitch, type TwitchAdapter } from "./twitch.js";
 import { CardRenderer } from "./render.js";
+import { ValidationError } from "./errors.js";
 export interface AppOptions {
   dataDir?: string;
   clock?: () => number;
@@ -65,7 +66,9 @@ export async function createApp(options: AppOptions = {}) {
   app.get("/fonts.css", async (_req, res) => {
     try {
       await access(resolve(".cache/fonts/fonts.css"));
-      res.type("css").send(await readFile(resolve(".cache/fonts/fonts.css"), "utf8"));
+      res
+        .type("css")
+        .send(await readFile(resolve(".cache/fonts/fonts.css"), "utf8"));
     } catch {
       res.type("css").send(`@import url('${fontUrl}');`);
     }
@@ -144,94 +147,90 @@ export async function createApp(options: AppOptions = {}) {
   });
   async function endAndExport() {
     stopGenerator();
-    const stream = await service.run(() => service.end());
+    const stream = await service.end();
     await renderer.render(stream.id, origin);
     broadcast({ type: "exported", id: stream.id });
     return stream;
   }
   const unsubscribe = adapter.subscribe(async (event) => {
-    if (event.type === "stream.online")
-      await service.run(() => service.start(event));
+    if (event.type === "stream.online") await service.start(event);
     else if (event.type === "stream.offline") await endAndExport();
+    else if (event.type === "stream.update") await service.updateStream(event);
+    else if (event.type === "connection.state") broadcast(event);
     else
-      await service.run(() =>
-        service.message(event.user, event.text, event.messageId),
-      );
-  });
-  app.post("/api/mock/start", async (req, res) => {
-    const stream = await service.run(() =>
-      service.start({
-        type: "stream.online",
-        title: String(req.body.title ?? ""),
-        viewerCount: 32,
-      }),
-    );
-    res.json(stream);
-  });
-  app.post("/api/mock/end", async (_req, res) => {
-    const stream = await endAndExport();
-    res.json({
-      id: stream.id,
-      cardUrl: `/card/${stream.id}`,
-      pngUrl: `/card/${stream.id}.png`,
-    });
-  });
-  app.post("/api/mock/chat", async (req, res) => {
-    const name = String(req.body.name ?? "")
-      .trim()
-      .replace(/^@/, "");
-    if (!/^[\p{L}\p{N}_.-]{1,25}$/u.test(name)) {
-      res
-        .status(400)
-        .json({
-          error:
-            "Use a name of 1–25 letters, numbers, underscores, dots or dashes",
-        });
-      return;
-    }
-    if (typeof req.body.text !== "string" || req.body.text.length > 500) {
-      res
-        .status(400)
-        .json({ error: "Message must be 500 characters or fewer" });
-      return;
-    }
-    const user: User = {
-      id: name.toLocaleLowerCase(),
-      name,
-      isMod: req.body.role === "mod",
-      isBroadcaster: req.body.role === "broadcaster",
-      isFollower: req.body.follower === true,
-      isSubscriber: req.body.subscriber === true,
-    };
-    res.json(await service.run(() => service.message(user, req.body.text)));
-  });
-  app.post("/api/mock/advance", async (req, res) => {
-    const ms = req.body.ms;
-    if (!Number.isFinite(ms) || ms < 0 || ms > 86_400_000) {
-      res.status(400).json({ error: "ms must be between 0 and 86400000" });
-      return;
-    }
-    await service.run(() => service.advance(ms));
-    res.json({ now: service.now() });
-  });
-  app.post("/api/mock/vod", async (req, res) => {
-    if (adapter instanceof MockTwitch)
-      adapter.vodSaving = req.body.enabled !== false;
-    res.json({
-      enabled: !(adapter instanceof MockTwitch) || adapter.vodSaving,
-    });
+      await service.message(event.user, event.text, event.messageId, event.at);
   });
   function stopGenerator() {
     if (generator) clearInterval(generator);
     generator = undefined;
   }
-  app.post("/api/mock/generator", async (req, res) => {
-    stopGenerator();
-    if (req.body.enabled) {
-      if (!service.active) throw new Error("Start a stream first");
-      generator = setInterval(() => {
-        void service
-          .run(async () => {
+  if (adapter.mode === "mock") {
+    app.post("/api/mock/start", async (req, res) => {
+      const stream = await service.start({
+        type: "stream.online",
+        title: String(req.body.title ?? ""),
+        viewerCount: 32,
+      });
+      res.json(stream);
+    });
+    app.post("/api/mock/end", async (_req, res) => {
+      const stream = await endAndExport();
+      res.json({
+        id: stream.id,
+        cardUrl: `/card/${stream.id}`,
+        pngUrl: `/card/${stream.id}.png`,
+      });
+    });
+    app.post("/api/mock/chat", async (req, res) => {
+      const name = String(req.body.name ?? "")
+        .trim()
+        .replace(/^@/, "");
+      if (!/^[\p{L}\p{N}_.-]{1,25}$/u.test(name)) {
+        res.status(400).json({
+          error:
+            "Use a name of 1–25 letters, numbers, underscores, dots or dashes",
+        });
+        return;
+      }
+      if (typeof req.body.text !== "string" || req.body.text.length > 500) {
+        res
+          .status(400)
+          .json({ error: "Message must be 500 characters or fewer" });
+        return;
+      }
+      const user: User = {
+        id: name.toLocaleLowerCase(),
+        name,
+        isMod: req.body.role === "mod",
+        isBroadcaster: req.body.role === "broadcaster",
+        isSubscriber: req.body.subscriber === true,
+      };
+      const at = service.now();
+      res.json(await service.message(user, req.body.text, undefined, at));
+    });
+    app.post("/api/mock/advance", async (req, res) => {
+      const ms = req.body.ms;
+      if (!Number.isFinite(ms) || ms < 0 || ms > 86_400_000) {
+        res.status(400).json({ error: "ms must be between 0 and 86400000" });
+        return;
+      }
+      await service.advance(ms);
+      res.json({ now: service.now() });
+    });
+    app.post("/api/mock/vod", async (req, res) => {
+      if (adapter instanceof MockTwitch)
+        adapter.vodSaving = req.body.enabled !== false;
+      res.json({
+        enabled: !(adapter instanceof MockTwitch) || adapter.vodSaving,
+      });
+    });
+    app.post("/api/mock/generator", async (req, res) => {
+      stopGenerator();
+      if (req.body.enabled) {
+        if (!service.active)
+          throw new ValidationError("Start a stream first", 409);
+        generator = setInterval(() => {
+          void (async () => {
             if (!service.active) return;
             await service.advance(3000);
             generation++;
@@ -247,17 +246,17 @@ export async function createApp(options: AppOptions = {}) {
             ];
             const name = `${names[generation % names.length]}${Math.floor(generation / names.length)}`;
             await service.message(
-              { id: name, name, isFollower: true, isSubscriber: true },
+              { id: name, name, isSubscriber: true },
               `!star ${["that dodge??", "the cat is back", "best song tonight", "やっと勝った"][Math.floor(generation / 6) % 4]}`,
             );
-          })
-          .catch((error) =>
-            broadcast({ type: "error", message: String(error) }),
+          })().catch(() =>
+            broadcast({ type: "error", message: "Mock generator failed" }),
           );
-      }, 1100);
-    }
-    res.json({ enabled: !!generator });
-  });
+        }, 1100);
+      }
+      res.json({ enabled: !!generator });
+    });
+  } // Mock control routes do not exist for live adapters.
   app.post("/api/coldopen", async (_req, res) => {
     broadcast({
       type: "coldopen",
@@ -275,13 +274,14 @@ export async function createApp(options: AppOptions = {}) {
           raw[key] < 0 ||
           raw[key] > 86_400_000
         )
-          throw new Error(`Invalid ${key}`);
+          throw new ValidationError(`Invalid ${key}`);
         settings[key] = raw[key];
       }
     }
-    for (const key of ["subsOnly", "followersOnly", "namesOnly"] as const)
+    for (const key of ["subsOnly", "namesOnly"] as const)
       if (raw[key] !== undefined) {
-        if (typeof raw[key] !== "boolean") throw new Error(`Invalid ${key}`);
+        if (typeof raw[key] !== "boolean")
+          throw new ValidationError(`Invalid ${key}`);
         settings[key] = raw[key];
       }
     if (raw.blocklist !== undefined) {
@@ -292,15 +292,15 @@ export async function createApp(options: AppOptions = {}) {
           (x: unknown) => typeof x !== "string" || x.length > 40,
         )
       )
-        throw new Error("Invalid blocklist");
+        throw new ValidationError("Invalid blocklist");
       settings.blocklist = raw.blocklist;
     }
     settings.mergeMs = defaults.mergeMs;
-    await service.run(() => service.settings(settings));
+    await service.settings(settings);
     res.json(settings);
   });
   app.delete("/api/stars/:id", async (req, res) => {
-    await service.run(() => service.removeStar(req.params.id));
+    await service.removeStar(req.params.id);
     res.json({ removed: true });
   });
   app.use((_req, res) => {
@@ -341,9 +341,9 @@ export async function createApp(options: AppOptions = {}) {
       ? undefined
       : setInterval(() => {
           void service
-            .run(() => service.tick())
-            .catch((error) =>
-              broadcast({ type: "error", message: String(error) }),
+            .tick()
+            .catch(() =>
+              broadcast({ type: "error", message: "Stream update failed" }),
             );
         }, 250);
   return {
@@ -361,14 +361,14 @@ export async function createApp(options: AppOptions = {}) {
         });
       });
       const addr = http.address();
-      origin = `http://${host}:${typeof addr === "object" && addr ? addr.port : port}`;
+      origin = `http://${host.includes(":") ? `[${host}]` : host}:${typeof addr === "object" && addr ? addr.port : port}`;
       return origin;
     },
     async close() {
       stopGenerator();
       if (timer) clearInterval(timer);
       unsubscribe();
-      await service.run(async () => {});
+      await service.dispose();
       await renderer.close();
       for (const socket of wss.clients) socket.terminate();
       await new Promise<void>((yes) => wss.close(() => yes()));
