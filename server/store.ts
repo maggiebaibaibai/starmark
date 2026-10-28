@@ -10,6 +10,11 @@ export interface SavedState {
 export const validId = (id: string) => /^[a-zA-Z0-9_-]{1,100}$/.test(id);
 export class Store {
   readonly root: string;
+  private writeListeners = new Set<() => void>();
+  onWrite(listener: () => void) {
+    this.writeListeners.add(listener);
+    return () => { this.writeListeners.delete(listener); };
+  }
   private savedListeners = new Set<() => void>();
   onStreamSaved(listener: () => void) {
     this.savedListeners.add(listener);
@@ -43,6 +48,7 @@ export class Store {
   private async atomic(file: string, value: unknown) {
     await writeFile(file + ".tmp", JSON.stringify(value, null, 2) + "\n");
     await rename(file + ".tmp", file);
+    for (const listener of this.writeListeners) listener();
   }
   async state(): Promise<SavedState> {
     return (

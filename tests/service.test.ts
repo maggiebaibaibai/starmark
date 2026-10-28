@@ -294,3 +294,26 @@ describe("chat throughput and delivery scheduling", () => {
     expect((await ended).stars[0]!.lighters).toHaveLength(2);
   });
 });
+
+it.each(["lock", "marker", "echo"])("resumes a failed %s checkpoint on the next successful write without replaying effects", async (stage) => {
+  const { service, twitch, setTime } = await setup();
+  for (const name of ["a", "b", "c"]) await service.message({ id: name, name }, "!star");
+  const original = service.store.saveStream.bind(service.store);
+  let failed = false;
+  const spy = vi.spyOn(service.store, "saveStream").mockImplementation(async (stream) => {
+    const star = stream.stars[0]!;
+    const hit = stage === "lock" ? star.delivery === "processing" : stage === "marker" ? !!star.marker : star.delivery === "done";
+    if (!failed && hit) { failed = true; throw new Error("private storage path"); }
+    return original(stream);
+  });
+  setTime(1_015_000);
+  await service.tick();
+  await expect(service.waitForDelivery()).rejects.toThrow("could not be saved");
+  expect((await service.snapshot()).deliveryWarning).toContain("next successful write");
+  spy.mockRestore();
+  await service.settings(service.state.settings);
+  await service.waitForDelivery();
+  expect((await service.snapshot()).deliveryWarning).toBeUndefined();
+  expect(twitch.calls.map((c) => c.method)).toEqual(["createMarker", "createClip", "sendChat"]);
+  expect((await service.store.stream(service.active!.id))!.stars[0]!.delivery).toBe("done");
+});

@@ -22,6 +22,12 @@ export interface ChatLine {
   text: string;
   kind: "viewer" | "bot" | "system";
 }
+function signal() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((yes) => { resolve = yes; });
+  return { promise, resolve };
+}
+const deliveryWarning = "Star delivery could not be saved. Check server storage; delivery resumes after the next successful write.";
 export class Service {
   state!: SavedState;
   active?: Stream;
@@ -32,7 +38,11 @@ export class Service {
   private streamCache?: Promise<Stream[]>;
   private unsubscribeCache: () => void;
   private deliveryJob?: Promise<void>;
-  private deliveryFailure?: unknown;
+  private deliveryFailure?: Error;
+  private recovery?: () => void;
+  private failureSignal = signal();
+  private unsubscribeWrites: () => void;
+  private disposed = false;
   private ending?: Promise<Stream>;
   private closing = false;
   constructor(
@@ -42,6 +52,14 @@ export class Service {
     readonly publish: (event: object) => void,
     private clock = Date.now,
   ) {
+    this.unsubscribeWrites = store.onWrite(() => {
+      if (!this.deliveryFailure) return;
+      this.deliveryFailure = undefined;
+      this.failureSignal = signal();
+      this.recovery?.();
+      this.recovery = undefined;
+      this.publish({ type: "delivery.status", warning: null });
+    });
     this.unsubscribeCache = store.onStreamSaved(() => {
       this.streamCache = undefined;
     });
@@ -109,6 +127,7 @@ export class Service {
       now: this.now(),
       mode: this.twitch.mode,
       connection: this.twitch.status(),
+      deliveryWarning: this.deliveryFailure ? deliveryWarning : undefined,
       settings: this.state.settings,
       active: this.active,
       previous: streams.find((s) => s.endedAt !== undefined),
@@ -162,7 +181,8 @@ export class Service {
     if (this.deliveryFailure) return;
     this.deliveryJob = this.deliver()
       .catch((error) => {
-        this.deliveryFailure = error;
+        this.deliveryFailure = new Error(deliveryWarning);
+        this.failureSignal.resolve();
         this.publish({
           type: "error",
           message: "Star delivery could not be saved. Check server storage.",
@@ -179,8 +199,32 @@ export class Service {
   }
   /** Called outside run(), e.g. on offline or shutdown; normal chat never waits here. */
   async waitForDelivery() {
-    while (this.deliveryJob) await this.deliveryJob;
+    while (this.deliveryJob) {
+      if (this.deliveryFailure) throw this.deliveryFailure;
+      await Promise.race([this.deliveryJob, this.failureSignal.promise]);
+    }
     if (this.deliveryFailure) throw this.deliveryFailure;
+  }
+  /** Keep the in-memory continuation at the failed disk checkpoint. Never replay a remote call. */
+  private async deliveryWrite(streamId: string, starId: string) {
+    for (;;) {
+      if (this.disposed) return false;
+      try {
+        return await this.run(async () => {
+          if (this.active?.id !== streamId || !this.active.stars.some((s) => s.id === starId)) return false;
+          await this.store.saveStream(this.active);
+          return true;
+        });
+      } catch {
+        const recovered = signal();
+        this.recovery = recovered.resolve;
+        this.deliveryFailure = new Error(deliveryWarning);
+        this.failureSignal.resolve();
+        this.publish({ type: "delivery.status", warning: deliveryWarning });
+        // Wait OUTSIDE run(), allowing settings, moderation and ticks to prove storage works again.
+        await recovered.promise;
+      }
+    }
   }
   private async patchDelivery(
     streamId: string,
@@ -188,15 +232,16 @@ export class Service {
     patch: (star: Star) => void,
     notify = false,
   ) {
-    return this.run(async () => {
+    const applied = await this.run(async () => {
       if (this.active?.id !== streamId) return false;
       const star = this.active.stars.find((s) => s.id === starId);
-      if (!star) return false; // A moderator removed it while the request was in flight.
+      if (!star) return false;
       patch(star);
-      await this.store.saveStream(this.active);
-      if (notify) await this.notify();
       return true;
     });
+    if (!applied || !(await this.deliveryWrite(streamId, starId))) return false;
+    if (notify) await this.run(() => this.notify());
+    return true;
   }
   private async deliver() {
     for (;;) {
@@ -207,7 +252,6 @@ export class Service {
         star.delivery = "processing"; // Durable lock before any external call.
         const makeClip = star.lighters.length >= 3 && stream.clipAttempts < 20;
         if (makeClip) stream.clipAttempts++;
-        await this.store.saveStream(stream);
         return {
           stream: structuredClone(stream),
           star: structuredClone(star),
@@ -216,6 +260,7 @@ export class Service {
       });
       if (!work) return;
       const { stream, star, makeClip } = work;
+      if (!(await this.deliveryWrite(stream.id, star.id))) continue;
       let marker: Star["marker"],
         markerError: string | undefined,
         vodOff = false;
@@ -434,8 +479,11 @@ export class Service {
   async dispose() {
     await this.run(async () => {});
     if (this.ending) await this.ending;
-    await this.waitForDelivery();
+    this.disposed = true;
+    this.recovery?.();
+    await this.deliveryJob;
     this.unsubscribeCache();
+    this.unsubscribeWrites();
   }
   card(stream: Stream) {
     return {

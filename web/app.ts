@@ -20,6 +20,7 @@ async function main() {
       state: Snapshot,
       events?: { type: string; star: Star }[],
     ) => void = () => {},
+    deliveryStatus: (warning?: string | null) => void = () => {},
     chat: (line: ChatLine) => void = () => {},
     play: ((stream?: Stream) => void) | undefined,
     connection: (ok: boolean) => void = () => {},
@@ -32,6 +33,7 @@ async function main() {
   else {
     const dashboard = dashboardPage();
     update = dashboard.update;
+    deliveryStatus = dashboard.deliveryStatus;
     chat = dashboard.chat;
     connection = dashboard.connection;
     notice = dashboard.notice;
@@ -58,6 +60,7 @@ async function main() {
           sequence = data.sequence;
           update(data, data.events);
         } else if (data.type === "chat") chat(data.line);
+        else if (data.type === "delivery.status") deliveryStatus(data.warning);
         else if (data.type === "connection.state")
           notice(`Adapter ${data.status.state}`);
         else if (data.type === "coldopen") play?.(data.previous);
