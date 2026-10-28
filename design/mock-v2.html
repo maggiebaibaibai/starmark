@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Starmark design mock</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500&family=Noto+Serif+JP:wght@400;500&family=Space+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#07081a; --deep:#0f1230;
+  --star:#fff6dc; --gold:#ffd27a; --rose:#ff9fb8; --teal:#5fe0c8; --violet:#8f7dff;
+  --line:rgba(255,246,220,.16); --dim:rgba(255,246,220,.62); --faint:rgba(255,246,220,.38);
+  --serif:'Instrument Serif','Noto Serif JP','Noto Serif SC',Georgia,serif;
+  --sans:'Space Grotesk','Noto Sans JP',system-ui,sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--ink);color:var(--star);font-family:var(--sans);-webkit-font-smoothing:antialiased}
+body{min-height:100vh;padding:28px 16px 64px;background:
+  radial-gradient(1200px 600px at 80% -10%,rgba(143,125,255,.14),transparent 60%),
+  radial-gradient(900px 500px at 0% 110%,rgba(95,224,200,.08),transparent 60%),var(--ink)}
+.wrap{max-width:1100px;margin:0 auto}
+header.top{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:22px;flex-wrap:wrap}
+.brand{font-family:var(--serif);font-size:44px;line-height:1}
+.brand i{color:var(--gold)}
+.sub{font-family:var(--mono);font-size:12px;color:var(--dim);letter-spacing:.12em;text-transform:uppercase;margin-top:8px}
+.note{font-size:14px;color:var(--dim);max-width:540px;line-height:1.7}
+nav{display:flex;gap:8px;margin:0 0 14px;flex-wrap:wrap}
+nav button,.seg button{font:500 14px var(--sans);color:var(--dim);background:rgba(255,246,220,.05);border:1px solid var(--line);border-radius:999px;padding:9px 16px;cursor:pointer;transition:.25s}
+nav button.on,.seg button.on{color:var(--ink);background:var(--star);border-color:var(--star)}
+.cap{font-size:14px;color:var(--dim);line-height:1.75;margin:0 0 14px}
+.cap b{color:var(--gold);font-weight:500}
+.frame{position:relative;width:100%;border-radius:22px;overflow:hidden;border:1px solid var(--line);background:#000;box-shadow:0 30px 80px rgba(0,0,0,.5)}
+.frame.wide{aspect-ratio:16/9}.frame.tall{aspect-ratio:4/5;max-width:620px;margin:0 auto}
+.stage{position:absolute;left:0;top:0;transform-origin:0 0}
+.scene{display:none}.scene.on{display:block}
+.ctrl{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:14px}
+.seg{display:flex;gap:6px;flex-wrap:wrap}
+.seg button{padding:8px 13px;font-size:13px}
+.ctrl input{font:400 14px var(--sans);color:var(--star);background:rgba(255,246,220,.06);border:1px solid var(--line);border-radius:999px;padding:10px 16px;outline:none;min-width:0;flex:1 1 120px}
+.ctrl input::placeholder{color:var(--faint)}
+.btn{font:600 14px var(--sans);color:var(--ink);background:var(--gold);border:0;border-radius:999px;padding:10px 18px;cursor:pointer;white-space:nowrap}
+.btn.ghost{background:transparent;color:var(--star);border:1px solid var(--line)}
+.lbl{font:500 11px var(--mono);letter-spacing:.14em;color:var(--faint);text-transform:uppercase;margin-right:2px}
+
+.chat{margin-top:14px;border:1px solid var(--line);border-radius:18px;background:rgba(255,246,220,.03);padding:12px 16px;height:168px;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end;gap:6px;font-size:14px;line-height:1.45}
+.chat .m{opacity:0;transform:translateY(6px);animation:in .35s forwards}
+@keyframes in{to{opacity:1;transform:none}}
+.chat .who{font-weight:600;margin-right:6px}
+.chat .bot{color:var(--gold)}
+.chat .sys{font:500 12px var(--mono);color:var(--teal);letter-spacing:.04em}
+
+/* ---------- 1 live ---------- */
+#live{width:1920px;height:1080px;overflow:hidden;background:#05060f}
+.feed{position:absolute;inset:0;background:
+  radial-gradient(700px 420px at 30% 40%,rgba(255,170,120,.22),transparent 70%),
+  radial-gradient(900px 600px at 72% 50%,rgba(120,150,255,.24),transparent 70%),
+  linear-gradient(160deg,#1d2033,#0b0c16 70%)}
+.hud{position:absolute;left:50%;bottom:22px;transform:translateX(-50%);width:640px;height:84px;border-radius:14px;border:2px dashed rgba(255,255,255,.12)}
+.hud::after{content:"game HUD";position:absolute;left:0;right:0;top:28px;text-align:center;font:500 20px var(--mono);color:rgba(255,255,255,.22)}
+.cam{position:absolute;right:56px;top:56px;width:400px;height:226px;border-radius:20px;background:linear-gradient(140deg,#2b2440,#16142a);border:1px solid rgba(255,255,255,.08)}
+.cam::after{content:"streamer cam";position:absolute;left:18px;bottom:14px;font:500 18px var(--mono);color:rgba(255,255,255,.3)}
+.feedtag{position:absolute;left:56px;top:56px;font:500 20px var(--mono);color:rgba(255,255,255,.35);letter-spacing:.1em}
+#aurora{position:absolute;left:0;top:0;width:1920px;height:1080px;pointer-events:none}
+.axis{position:absolute;height:1px;background:linear-gradient(90deg,transparent,var(--line) 4%,var(--line) 96%,transparent)}
+.play{position:absolute;width:10px;height:10px;border-radius:50%;background:var(--gold);box-shadow:0 0 16px 3px rgba(255,210,122,.8);transform:translate(-50%,-50%)}
+.head{position:absolute;font:500 19px var(--mono);letter-spacing:.18em;color:var(--dim);white-space:nowrap}
+.head b{color:var(--gold);font-weight:500}
+.ex{position:absolute;font:500 19px var(--mono);color:var(--gold);white-space:nowrap;transition:opacity .6s}
+.st{position:absolute;transform:translate(-50%,-50%);transition:left .9s cubic-bezier(.6,0,.2,1),top .9s cubic-bezier(.6,0,.2,1)}
+.st svg{display:block;overflow:visible;filter:drop-shadow(0 0 8px rgba(255,214,140,.95))}
+.st .tag{position:absolute;left:50%;top:calc(100% + 2px);transform:translateX(-50%);font:500 15px var(--mono);color:var(--faint);white-space:nowrap;opacity:0;transition:opacity .6s}
+.st.labeled .tag{opacity:1}
+.tw{animation:tw 3.4s ease-in-out infinite}
+@keyframes tw{50%{opacity:.72}}
+.burst{position:absolute;transform:translate(-50%,-50%);text-align:center;pointer-events:none;transition:opacity .5s}
+.burst .halo{position:absolute;left:50%;top:50%;width:900px;height:420px;transform:translate(-50%,-50%);background:radial-gradient(closest-side,rgba(7,8,26,.72),rgba(7,8,26,0));z-index:-1}
+.burst svg{display:block;margin:0 auto;overflow:visible;filter:drop-shadow(0 0 30px rgba(255,214,140,.9))}
+.burst .core{transform-origin:center;animation:ignite .9s cubic-bezier(.2,1.6,.4,1) both}
+@keyframes ignite{0%{transform:scale(0) rotate(-120deg)}100%{transform:scale(1) rotate(0)}}
+.burst .ring{position:absolute;left:50%;top:80px;width:40px;height:40px;margin:-20px;border:3px solid var(--gold);border-radius:50%;animation:ring 1.4s ease-out forwards}
+@keyframes ring{from{transform:scale(.2);opacity:1}to{transform:scale(9);opacity:0}}
+.burst .u{font:600 60px var(--sans);color:var(--gold);margin-top:14px;white-space:nowrap}
+.burst .r{font:italic 400 44px var(--serif);margin-top:2px;white-space:nowrap}
+.burst .j{font:500 24px var(--mono);color:var(--star);opacity:.75;margin-top:14px;white-space:nowrap;min-height:30px}
+.burst .j em{font-style:normal;color:var(--rose)}
+
+/* ---------- 2 card ---------- */
+#card{width:1080px;height:1350px;overflow:hidden;background:
+  radial-gradient(900px 700px at 70% 30%,rgba(143,125,255,.2),transparent 65%),
+  radial-gradient(700px 500px at 15% 85%,rgba(95,224,200,.10),transparent 65%),
+  linear-gradient(180deg,#0d1030,#07081a)}
+#cardDust,#coDust{position:absolute;inset:0}
+.ch{position:absolute;left:84px;top:80px;right:84px}
+.ch .k{font:500 19px var(--mono);letter-spacing:.2em;color:var(--gold)}
+.ch .h{font:400 88px/1.02 var(--serif);margin-top:24px}
+.ch .h i{color:var(--gold)}
+.ch .m{font:400 21px var(--mono);color:var(--dim);margin-top:24px;line-height:1.6}
+#cardSvg{position:absolute;left:0;top:0}
+.cs{cursor:pointer}
+.cl{font-family:var(--mono);font-size:22px;fill:rgba(255,246,220,.66)}
+.cl.top{fill:var(--star)}
+.cr{font-family:var(--serif);font-style:italic;font-size:32px;fill:var(--gold)}
+.cj{font-family:var(--mono);font-size:18px;fill:rgba(255,246,220,.55)}
+.rk{font:600 20px var(--sans);fill:var(--ink)}
+.ax{font-family:var(--mono);font-size:19px;fill:var(--faint)}
+.cf{position:absolute;left:84px;right:84px;bottom:64px;display:flex;justify-content:space-between;align-items:flex-end}
+.cf .a{font:italic 400 30px var(--serif)}
+.cf .a small{display:block;font:500 19px var(--mono);font-style:normal;color:var(--faint);margin-top:8px;letter-spacing:.06em}
+.cf .b{font:500 18px var(--mono);color:var(--faint);letter-spacing:.2em;text-transform:uppercase}
+.tip{position:absolute;padding:18px 22px;border-radius:22px;background:rgba(15,18,48,.95);border:1px solid rgba(255,214,140,.4);min-width:360px;pointer-events:none;opacity:0;transform:translateY(8px);transition:.25s}
+.tip.on{opacity:1;transform:none}
+.tip .t1{font:500 19px var(--mono);color:var(--dim)}
+.tip .t2{font:600 26px var(--sans);color:var(--gold);margin-top:8px}
+.tip .t3{font:italic 400 28px var(--serif);margin-top:4px}
+.tip .t4{font:500 18px var(--mono);color:var(--teal);margin-top:12px}
+
+/* ---------- 3 cold open ---------- */
+#co{width:1920px;height:1080px;overflow:hidden;background:linear-gradient(180deg,#0b0e2c,#05060f)}
+#world{position:absolute;left:0;top:0;width:5760px;height:1080px;transform-origin:0 0;transition:transform 3s cubic-bezier(.65,0,.35,1),opacity 1s}
+.fade{transition:opacity .8s}
+.coK{position:absolute;left:0;right:0;top:380px;text-align:center;font:500 24px var(--mono);letter-spacing:.26em;color:var(--gold)}
+.coH{position:absolute;left:0;right:0;top:430px;text-align:center;font:400 120px var(--serif)}
+.coH i{color:var(--gold)}
+.toast{position:absolute;left:56px;top:52px;font:500 20px var(--mono);color:var(--teal);padding:12px 18px;border-radius:999px;background:rgba(7,8,26,.6);border:1px solid rgba(95,224,200,.35)}
+.skip{position:absolute;right:56px;bottom:48px;font:500 18px var(--mono);color:var(--faint);letter-spacing:.14em}
+.count{position:absolute;left:0;right:0;top:330px;text-align:center;font:500 300px var(--serif);color:var(--rose);opacity:0;transition:opacity .4s,transform .9s;transform:scale(.9)}
+.count.on{opacity:.9;transform:scale(1)}
+.clip{position:absolute;inset:0;opacity:0;transition:opacity .7s}
+.clip.on{opacity:1}
+.clip .img{position:absolute;inset:0;background:radial-gradient(900px 560px at 38% 42%,rgba(255,170,120,.4),transparent 70%),radial-gradient(800px 600px at 80% 70%,rgba(120,150,255,.3),transparent 70%),linear-gradient(140deg,#2a2648,#0d0f22)}
+.clip .img::after{content:"clip plays here";position:absolute;left:50%;top:42%;transform:translate(-50%,-50%);font:500 22px var(--mono);color:rgba(255,255,255,.25);letter-spacing:.2em}
+.clip .vig{position:absolute;inset:0;background:linear-gradient(to top,rgba(5,6,15,.92) 0%,rgba(5,6,15,.35) 40%,transparent 65%)}
+.clip .tx{position:absolute;left:96px;right:96px;bottom:88px}
+.clip .o{font:500 22px var(--mono);letter-spacing:.24em;color:var(--rose)}
+.clip .why{font:italic 400 96px/1.05 var(--serif);margin-top:14px}
+.clip .who{font:600 34px var(--sans);color:var(--gold);margin-top:22px}
+.clip .who span{font:500 24px var(--mono);color:var(--dim);margin-left:14px}
+.endband{position:absolute;left:120px;right:120px;bottom:120px;opacity:0;transition:opacity 1s}
+.endband .ax2{height:1px;background:var(--line)}
+.endband .tx2{text-align:center;font:italic 400 52px var(--serif)}
+.endband .tx2 b{font:500 40px var(--mono);font-style:normal;color:var(--gold)}
+@media (max-width:600px){.brand{font-size:36px}nav button{padding:8px 13px;font-size:13px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div>
+      <div class="brand">Star<i>mark</i></div>
+      <div class="sub">your chat writes the highlight reel </div>
+    </div>
+    
+  </header>
+
+  <nav>
+    <button data-s="0" class="on">1 · Live</button>
+    <button data-s="1">2 · Starmap card</button>
+    <button data-s="2">3 · Next stream cold open</button>
+  </nav>
+
+  <section class="scene on" data-i="0">
+    
+    <div class="frame wide" id="fLive"><div class="stage" id="live">
+      <div class="feed"></div><div class="feedtag">● LIVE · your stream</div><div class="cam"></div><div class="hud"></div>
+      <canvas id="aurora" width="1920" height="1080"></canvas>
+      <div class="axis" id="axis"></div>
+      <div class="head" id="head">TONIGHT'S SKY · <b id="cnt">0</b> ★</div>
+      <div class="ex" id="ex" style="opacity:0"></div>
+      <div id="stars"></div>
+      <div class="play" id="play"></div>
+      <div id="bursts"></div>
+    </div></div>
+    <div class="ctrl">
+      <span class="lbl">Position</span>
+      <div class="seg" id="pos"><button data-v="bottom" class="on">Bottom</button><button data-v="top">Top</button><button data-v="compact">Compact</button></div>
+      <span class="lbl" style="margin-left:6px">Reasons</span>
+      <div class="seg" id="rs"><button data-v="1" class="on">Show</button><button data-v="0">Names only</button></div>
+      <span class="lbl" style="margin-left:6px">Aurora</span>
+      <div class="seg" id="au"><button data-v="1" class="on">On</button><button data-v="0">Off</button></div>
+    </div>
+    <div class="chat" id="chat"></div>
+    <div class="ctrl">
+      <input id="nm" placeholder="name" maxlength="16">
+      <input id="why" placeholder="why" maxlength="40">
+      <button class="btn" id="go">!star</button>
+      <button class="btn ghost" id="again">Replay</button>
+    </div>
+  </section>
+
+  <section class="scene" data-i="1">
+    
+    <div class="frame tall" id="fCard"><div class="stage" id="card">
+      <canvas id="cardDust" width="1080" height="1350"></canvas>
+      <div class="ch"><div class="k">STARMAP · TWITCH.TV/YOURCHANNEL</div><div class="h">Last night you lit<br><i id="cardN">8 stars</i></div><div class="m" id="cardMeta"></div></div>
+      <svg id="cardSvg" width="1080" height="1350"></svg>
+      <div class="cf"><div class="a">Every star opens its moment<small>starmark.tv/yourchannel/oct-28</small></div><div class="b">starmark</div></div>
+      <div class="tip" id="tip"><div class="t1"></div><div class="t2"></div><div class="t3"></div><div class="t4"></div></div>
+    </div></div>
+  </section>
+
+  <section class="scene" data-i="2">
+    
+    <div class="frame wide" id="fCo"><div class="stage" id="co">
+      <div id="world"><canvas id="coDust" width="5760" height="1080"></canvas><svg id="coSvg" width="5760" height="1080"></svg></div>
+      <div class="coK fade" id="coK" style="opacity:0">LAST STREAM · OCT 28</div>
+      <div class="coH fade" id="coH" style="opacity:0">Your <i>brightest</i> moments</div>
+      <div class="count" id="cdown"></div>
+      <div class="clip" id="clip"><div class="img"></div><div class="vig"></div><div class="tx"><div class="o" id="cO"></div><div class="why" id="cY"></div><div class="who" id="cW"></div></div></div>
+      <div class="endband" id="endb"><div class="tx2">Tonight's sky is empty. Type <b>!star</b> to light the first one.</div><div class="ax2" style="margin-top:46px"></div></div>
+      <div class="toast fade" id="toast" style="opacity:0">stream.online · 19:02:11 → cold open</div>
+      <div class="skip">SKIPPABLE · 15S</div>
+    </div></div>
+    <div class="ctrl"><button class="btn" id="coPlay">Play</button></div>
+  </section>
+</div>
+
+<script>
+const DUR=9600
+const POOL=['nova','kiki','orbit','mochi_','sable','lux','tofu','pine','echo','wren','juno','fig','cosmo','yuki','bean','dax','opal','rue','zed','iris','moss','paz']
+const MARKS=[
+ {t:640,u:'miso_',r:'first raid of the night',n:3},
+ {t:1720,u:'kettle.exe',r:'that dodge??',n:7},
+ {t:2980,u:'ana_lune',r:'cat walked on the keyboard',n:11},
+ {t:4105,u:'pixelbreak',r:'clutch 1v3',n:16},
+ {t:5300,u:'hoshi',r:'やっと勝った',n:8},
+ {t:6420,u:'luma',r:'he finally beat the boss',n:21},
+ {t:7790,u:'ttiny',r:'new personal best',n:4},
+ {t:9100,u:'marigold',r:'raid out',n:12}]
+let a0=7;const rnd=()=>{a0|=0;a0=a0+0x6D2B79F5|0;let t=Math.imul(a0^a0>>>15,1|a0);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}
+MARKS.forEach(m=>{m.with=[];for(let i=1;i<m.n;i++)m.with.push(POOL[Math.floor(rnd()*POOL.length)]+(i>6?i:''))})
+const TOTAL=MARKS.reduce((a,m)=>a+m.n,0)
+const top3=[...MARKS].sort((a,b)=>b.n-a.n).slice(0,3)
+const MAXN=Math.max(...MARKS.map(m=>m.n))
+const fmt=t=>{t=Math.round(t);const h=Math.floor(t/3600),m=Math.floor(t%3600/60),s=t%60;return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`}
+const vodT=t=>{t=Math.round(t);return `${Math.floor(t/3600)}h${Math.floor(t%3600/60)}m${t%60}s`}
+const starPath=r=>{const i=r*.28;return `M0 ${-r} C${i*.4} ${-i} ${i} ${-i*.4} ${r} 0 C${i} ${i*.4} ${i*.4} ${i} 0 ${r} C${-i*.4} ${i} ${-i} ${i*.4} ${-r} 0 C${-i} ${-i*.4} ${-i*.4} ${-i} 0 ${-r}Z`}
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
+const withLine=(m,k)=>{const shown=m.with.slice(0,Math.min(3,k)).map(x=>'@'+x).join('  ');return `${shown}${k>3?`  +${k-3}`:''}`}
+const sleep=ms=>new Promise(r=>setTimeout(r,ms))
+
+function fit(frame,stage,w){stage.style.transform=`scale(${frame.clientWidth/w})`}
+const fits=[[fLive,live,1920],[fCard,card,1080],[fCo,co,1920]]
+const refit=()=>fits.forEach(a=>fit(...a));new ResizeObserver(refit).observe(document.body);refit()
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x===b))
+  document.querySelectorAll('.scene').forEach(s=>s.classList.toggle('on',s.dataset.i===b.dataset.s))
+  refit(); if(b.dataset.s==='2') coRun()})
+function seg(id,cb){const el=document.getElementById(id);el.querySelectorAll('button').forEach(b=>b.onclick=()=>{el.querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b));cb(b.dataset.v)})}
+function dust(cv,n,seed){let a=seed;const r=()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}
+  const g=cv.getContext('2d');for(let i=0;i<n;i++){const x=r()*cv.width,y=r()*cv.height,al=.06+r()*.42,rr=r()<.93?.8:1.6;g.fillStyle=`rgba(255,246,220,${al})`;g.beginPath();g.arc(x,y,rr,0,7);g.fill()}}
+
+/* ---------- 1 live ---------- */
+const LAY={
+  bottom:{L:120,R:1800,Y:1046,up:-1,head:[120,1000],ex:[1800,1000],burstY:780},
+  top:{L:120,R:1420,Y:40,up:1,head:[120,62],ex:[1420,62],burstY:330},
+  compact:{L:1480,R:1860,Y:330,up:1,head:[1480,346],ex:null,burstY:600}}
+let lay=LAY.bottom,showReason=true,auroraOn=true
+const X=t=>lay.L+(lay.R-lay.L)*t/DUR
+const hy=s=>{let h=2166136261;for(const c of s){h^=c.charCodeAt(0);h=Math.imul(h,16777619)}return(h>>>0)/4294967295}
+const SY=m=>lay.Y-lay.up*(10+hy(m.u)*22)
+function placeChrome(){axis.style.left=lay.L+'px';axis.style.width=(lay.R-lay.L)+'px';axis.style.top=lay.Y+'px'
+  head.style.left=lay.head[0]+'px';head.style.top=lay.head[1]+'px';head.style.transform=lay===LAY.bottom?'translateY(-100%)':''
+  if(lay.ex){ex.style.display='';ex.style.left=lay.ex[0]+'px';ex.style.top=lay.ex[1]+'px';ex.style.transform=(lay===LAY.bottom?'translate(-100%,-100%)':'translateX(-100%)')}else ex.style.display='none'
+  stars.querySelectorAll('.st').forEach(el=>{const m=el._m;el.style.left=X(m.t)+'px';el.style.top=SY(m)+'px'})}
+seg('pos',v=>{lay=LAY[v];placeChrome()})
+seg('rs',v=>{showReason=v==='1'})
+seg('au',v=>{auroraOn=v==='1'})
+placeChrome()
+
+const rate=t=>{let v=.22+.1*Math.sin(t/900)+.06*Math.sin(t/233);for(const m of MARKS)v+=.06*Math.sqrt(m.n)*Math.exp(-(((t-m.t)/260)**2));return v}
+const ag=aurora.getContext('2d')
+function drawAurora(ts){ag.clearRect(0,0,1920,1080);if(!auroraOn)return;const px=X(now),Y=lay.Y,dir=lay===LAY.bottom?-1:1
+  ag.save();ag.filter='blur(10px)';ag.globalCompositeOperation='lighter'
+  ;[['95,224,200',0,1],['143,125,255',2.1,.75]].forEach(([c,ph,k])=>{
+    const H=lay===LAY.compact?40:70
+    ag.beginPath();ag.moveTo(lay.L,Y)
+    for(let x=lay.L;x<=px;x+=8){const t=(x-lay.L)/(lay.R-lay.L)*DUR;const h=rate(t)*H*k*(1+.18*Math.sin(x/53+ts/800+ph));ag.lineTo(x,Y+dir*h)}
+    ag.lineTo(px,Y);ag.closePath()
+    const gr=ag.createLinearGradient(0,Y,0,Y+dir*H);gr.addColorStop(0,`rgba(${c},.55)`);gr.addColorStop(1,`rgba(${c},0)`);ag.fillStyle=gr;ag.fill()})
+  ag.restore()}
+
+let now=0,last=0,shown=new Set(),count=0,queue=[],busy=false
+function chatLine(html){const d=document.createElement('div');d.className='m';d.innerHTML=html;chat.appendChild(d);while(chat.children.length>8)chat.firstChild.remove()}
+const hue=s=>['#8fd3ff','#ffb3c7','#b9a6ff','#7ee0c3','#ffd59a','#ff9f7a'][Math.floor(hy(s)*6)]
+function smallStar(m){const el=document.createElement('div');el.className='st';el._m=m;const r=4+Math.sqrt(m.n)*1.6
+  el.innerHTML=`<svg width="40" height="40" viewBox="-20 -20 40 40"><path class="tw" fill="${top3.includes(m)?'var(--gold)':'var(--star)'}" d="${starPath(r)}"/></svg><div class="tag">@${esc(m.u)}</div>`
+  el.style.left=X(m.t)+'px';el.style.top=SY(m)+'px';stars.appendChild(el);el.classList.add('labeled');setTimeout(()=>el.classList.remove('labeled'),6000)}
+async function burst(m){busy=true;const bx=Math.min(1500,Math.max(420,X(m.t))),by=lay.burstY
+  const b=document.createElement('div');b.className='burst';b.style.left=(lay===LAY.compact?1400:bx)+'px';b.style.top=by+'px'
+  b.innerHTML=`<div class="halo"></div><span class="ring"></span><svg width="160" height="160" viewBox="-80 -80 160 160"><path class="core" fill="var(--gold)" d="${starPath(70)}"/></svg><div class="u">@${esc(m.u)}</div>${showReason?`<div class="r">${esc(m.r)}</div>`:''}<div class="j"></div>`
+  bursts.appendChild(b);const j=b.querySelector('.j')
+  chatLine(`<span class="who" style="color:${hue(m.u)}">${esc(m.u)}</span>!star ${esc(m.r)}`)
+  for(let k=1;k<m.n;k++){await sleep(Math.max(70,1500/m.n));j.innerHTML=esc(withLine(m,k)).replace(/(\+\d+)$/,'<em>$1</em>');if(k===1||k===m.n-1)chatLine(`<span class="who" style="color:${hue(m.with[k-1])}">${esc(m.with[k-1])}</span>!star`)}
+  await sleep(900)
+  chatLine(`<span class="bot">⭐ @${esc(m.u)} lit a star at ${fmt(m.t)} · ${m.n} of you joined</span>`)
+  chatLine(`<span class="sys">marker created${m.n>=3?' · clip saved':''}</span>`)
+  b.style.opacity=0;await sleep(250);b.remove()
+  smallStar(m);count++;cnt.textContent=count
+  if(lay.ex){ex.textContent=`try: !star ${['that dodge','best song tonight','the cat is back','gg'][count%4]}`;ex.style.opacity=1;setTimeout(()=>ex.style.opacity=0,5000)}
+  busy=false}
+async function pump(){if(busy||!queue.length)return;await burst(queue.shift());pump()}
+function liveTick(ts){const dt=last?ts-last:0;last=ts;if(!busy)now=Math.min(DUR,now+dt*DUR/60000)
+  play.style.left=X(now)+'px';play.style.top=lay.Y+'px'
+  for(const m of MARKS)if(m.t<=now&&!shown.has(m)){shown.add(m);queue.push(m);pump()}
+  drawAurora(ts);requestAnimationFrame(liveTick)}
+requestAnimationFrame(liveTick)
+again.onclick=()=>{now=0;shown=new Set();count=0;queue=[];stars.innerHTML='';cnt.textContent='0';chat.innerHTML=''}
+go.onclick=()=>{const u=(nm.value.trim()||'you').replace(/^@/,'').slice(0,16),r=(why.value.trim()||'this moment').slice(0,40);const m={t:Math.max(60,now),u,r,n:2+Math.floor(Math.random()*5)};m.with=[];for(let i=1;i<m.n;i++)m.with.push(POOL[Math.floor(Math.random()*POOL.length)]);queue.push(m);pump();why.value=''}
+
+/* ---------- 2 card ---------- */
+dust(cardDust,460,11)
+const svgNS='http://www.w3.org/2000/svg'
+function mk(tag,attrs,parent){const e=document.createElementNS(svgNS,tag);for(const k in attrs)e.setAttribute(k,attrs[k]);parent.appendChild(e);return e}
+const CX=t=>130+820*t/DUR,CY=m=>1060-(m.n/MAXN)*500
+cardN.textContent=MARKS.length+' stars'
+cardMeta.innerHTML=`Oct 28, 2026 · 2h 40m live · ${TOTAL} of you lit them<br>“no hints, final boss”`
+const defs=mk('defs',{},cardSvg),rg=mk('radialGradient',{id:'glow'},defs);mk('stop',{offset:0,'stop-color':'rgba(255,210,122,.38)'},rg);mk('stop',{offset:1,'stop-color':'rgba(255,210,122,0)'},rg)
+const pts=MARKS.map(m=>[CX(m.t),CY(m)])
+let d=`M${pts[0][0]} ${pts[0][1]}`;for(let i=1;i<pts.length;i++){const [x0,y0]=pts[i-1],[x1,y1]=pts[i],mx=(x0+x1)/2;d+=` C${mx} ${y0} ${mx} ${y1} ${x1} ${y1}`}
+mk('path',{d,fill:'none',stroke:'rgba(255,214,140,.22)','stroke-width':1.6,'stroke-dasharray':'2 8'},cardSvg)
+mk('line',{x1:130,x2:950,y1:1110,y2:1110,stroke:'rgba(255,246,220,.16)'},cardSvg)
+;[0,3600,7200,DUR].forEach(t=>{const e=mk('text',{x:CX(t),y:1146,'text-anchor':'middle',class:'ax'},cardSvg);e.textContent=t===DUR?'2:40':fmt(t).slice(0,4)})
+const up=mk('text',{x:84,y:560,class:'ax'},cardSvg);up.textContent='more of you ↑'
+MARKS.forEach(m=>{const rank=top3.indexOf(m),isTop=rank>=0,x=CX(m.t),y=CY(m),s=8+Math.sqrt(m.n)*4.2,g=mk('g',{class:'cs',transform:`translate(${x},${y})`},cardSvg)
+  if(isTop)mk('circle',{r:s*2.8,fill:'url(#glow)'},g)
+  mk('path',{d:starPath(isTop?s*1.25:s),fill:isTop?'var(--gold)':'var(--star)'},g)
+  mk('circle',{r:50,fill:'transparent'},g)
+  const left=x>760||m.u==='ana_lune',lx=left?-(s+18):s+18,anc=left?'end':'start'
+  if(isTop){const bx=left?s+20:-(s+20);mk('circle',{cx:bx,cy:-s-6,r:17,fill:'var(--gold)'},g);const rt=mk('text',{x:bx,y:-s+1,'text-anchor':'middle',class:'rk'},g);rt.textContent=rank+1}
+  const a=mk('text',{x:lx,y:isTop?-14:7,'text-anchor':anc,class:'cl'+(isTop?' top':'')},g);a.textContent=`${fmt(m.t)}  @${m.u}`
+  if(isTop){const b=mk('text',{x:lx,y:24,'text-anchor':anc,class:'cr'},g);b.textContent=m.r;const c=mk('text',{x:lx,y:52,'text-anchor':anc,class:'cj'},g);c.textContent='with '+withLine(m,m.n-1)}
+  else if(/[^\x00-\x7f]/.test(m.r)){const b=mk('text',{x:lx,y:38,'text-anchor':anc,class:'cr'},g);b.style.fill='rgba(255,246,220,.8)';b.style.fontSize='26px';b.textContent=m.r}
+  g.onclick=e=>{e.stopPropagation();const tp=tip.children;tp[0].textContent=fmt(m.t)+' · '+m.n+' of you';tp[1].textContent='@'+m.u;tp[2].textContent=m.r;tp[3].textContent='▶ twitch.tv/videos/…?t='+vodT(m.t)
+    tip.style.left=Math.min(1080-400,Math.max(20,x-180))+'px';tip.style.top=(y>640?y-220:y+50)+'px';tip.classList.add('on')}})
+card.onclick=()=>tip.classList.remove('on')
+
+/* ---------- 3 cold open ---------- */
+dust(coDust,1700,23)
+const WX=t=>360+5040*t/DUR,WY=m=>840-(m.n/MAXN)*620
+const defs2=mk('defs',{},coSvg),rg2=mk('radialGradient',{id:'glow2'},defs2);mk('stop',{offset:0,'stop-color':'rgba(255,210,122,.42)'},rg2);mk('stop',{offset:1,'stop-color':'rgba(255,210,122,0)'},rg2)
+const wp=MARKS.map(m=>[WX(m.t),WY(m)]);let d2=`M${wp[0][0]} ${wp[0][1]}`;for(let i=1;i<wp.length;i++){const [x0,y0]=wp[i-1],[x1,y1]=wp[i],mx=(x0+x1)/2;d2+=` C${mx} ${y0} ${mx} ${y1} ${x1} ${y1}`}
+mk('path',{d:d2,fill:'none',stroke:'rgba(255,214,140,.25)','stroke-width':2.4,'stroke-dasharray':'3 12'},coSvg)
+MARKS.forEach(m=>{const g=mk('g',{transform:`translate(${WX(m.t)},${WY(m)})`},coSvg),isTop=top3.includes(m),s=12+Math.sqrt(m.n)*5
+  if(isTop)mk('circle',{r:s*3.4,fill:'url(#glow2)'},g)
+  mk('path',{d:starPath(s),fill:isTop?'var(--gold)':'var(--star)'},g)
+  const t=mk('text',{x:0,y:s+44,'text-anchor':'middle',class:'cl'},g);t.textContent='@'+m.u})
+let coId=0
+const cam=(x,y,s,dur)=>{world.style.transitionDuration=dur+'s, 1s';world.style.transform=`translate(${960-x*s}px,${540-y*s}px) scale(${s})`}
+const show=(el,v)=>el.style.opacity=v
+async function coRun(){const id=++coId,ok=()=>id===coId
+  clip.classList.remove('on');cdown.classList.remove('on');endb.style.opacity=0;[coK,coH,toast].forEach(e=>show(e,0))
+  world.style.opacity=.3;cam(960,540,1,0);await sleep(80);if(!ok())return
+  show(toast,1);await sleep(400);show(coK,1);await sleep(300);show(coH,1);await sleep(2300);if(!ok())return
+  show(coK,0);show(coH,0);world.style.opacity=1;cam(4700,540,1,4);await sleep(4100);if(!ok())return
+  const order=[...top3].reverse()
+  for(let i=0;i<3;i++){const m=order[i]
+    cdown.textContent=3-i;cam(WX(m.t),WY(m),2.2,1.6);cdown.classList.add('on');await sleep(1300);if(!ok())return
+    cdown.classList.remove('on')
+    cO.textContent=['NO. 3','NO. 2','NO. 1 · BRIGHTEST'][i]+' · '+fmt(m.t);cY.textContent=m.r
+    cW.innerHTML=`lit by @${esc(m.u)}<span>with ${esc(withLine(m,m.n-1))}</span>`
+    clip.classList.add('on');await sleep(3000);if(!ok())return
+    clip.classList.remove('on');await sleep(400)}
+  show(toast,0);cam(2880,540,.34,2.4);await sleep(1600);if(!ok())return
+  world.style.opacity=.25;endb.style.opacity=1}
+coPlay.onclick=coRun
+</script>
+</body>
+</html>
