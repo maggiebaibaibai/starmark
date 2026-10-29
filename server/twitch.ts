@@ -243,6 +243,7 @@ export class LiveTwitch implements TwitchAdapter {
     for (const listener of this.listeners) await listener(event);
   }
   private async setConnection(state: ConnectionState) {
+    if (this.connection === state) return;
     this.connection = state;
     await this.emit({ type: "connection.state", status: this.status() });
   }

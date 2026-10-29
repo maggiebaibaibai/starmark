@@ -940,3 +940,43 @@ it("refreshes once for concurrent marker, clip and chat writes during transport 
     vi.useRealTimers();
   }
 });
+
+it("emits connection state only on changes across maintenance, reconnection and disconnect", async () => {
+  const t = await setup();
+  fakeConnectionTimers();
+  const states = () =>
+    t.events.flatMap((event) =>
+      event.type === "connection.state" ? [event.status.state] : [],
+    );
+  try {
+    await t.connect();
+    t.sockets[0]!.welcome();
+    await vi.waitFor(() => expect(t.adapter.status().state).toBe("connected"));
+    await keepAliveFor(t.sockets[0]!, 90_000);
+    expect(states()).toEqual(["connecting", "connected"]);
+    t.sockets[0]!.terminate();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(t.sockets).toHaveLength(2);
+    t.sockets[1]!.welcome("reconnected-session");
+    await vi.waitFor(() => expect(t.adapter.status().state).toBe("connected"));
+    await keepAliveFor(t.sockets[1]!, 90_000);
+    expect(states()).toEqual([
+      "connecting",
+      "connected",
+      "reconnecting",
+      "connected",
+    ]);
+    await t.adapter.disconnect();
+    await t.adapter.disconnect();
+    expect(states()).toEqual([
+      "connecting",
+      "connected",
+      "reconnecting",
+      "connected",
+      "disconnected",
+    ]);
+  } finally {
+    await t.adapter.dispose();
+    vi.useRealTimers();
+  }
+});
