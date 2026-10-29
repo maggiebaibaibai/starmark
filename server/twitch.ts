@@ -414,10 +414,8 @@ export class LiveTwitch implements TwitchAdapter {
   }
   private refresh(): Promise<void> {
     if (this.refreshing) return this.refreshing;
-    if (this.retryTimer)
-      return Promise.reject(
-        new TwitchError("Twitch authorization is reconnecting", 503),
-      );
+    // Helix writes can need a fresh token while EventSub is backing off.
+    // Only concurrent refreshes share a lock; transport retries are independent.
     const epoch = this.authEpoch;
     const old = this.tokens;
     if (!old)

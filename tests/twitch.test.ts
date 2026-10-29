@@ -893,3 +893,50 @@ it.each([
     }
   },
 );
+
+it("refreshes once for concurrent marker, clip and chat writes during transport backoff", async () => {
+  const t = await setup();
+  fakeConnectionTimers();
+  try {
+    await t.connect();
+    t.sockets[0]!.welcome();
+    await vi.waitFor(() => expect(t.adapter.status().state).toBe("connected"));
+    t.sockets[0]!.terminate();
+    expect(t.adapter.status().state).toBe("reconnecting");
+    t.setNow(Date.parse("2026-10-28T12:59:01Z"));
+    // Do not advance timers: all three writes must work before transport backoff expires.
+    await expect(
+      Promise.all([
+        t.adapter.createMarker(stream, star, "test"),
+        t.adapter.createClip(stream, star),
+        t.adapter.sendChat(stream, "test echo"),
+      ]),
+    ).resolves.toEqual([
+      { id: "marker", positionSeconds: 16 },
+      { id: "clip" },
+      undefined,
+    ]);
+    expect(t.calls("/oauth2/token")).toHaveLength(2);
+    expect(
+      (t.calls("/oauth2/token")[1]![1]!.body as URLSearchParams).get(
+        "grant_type",
+      ),
+    ).toBe("refresh_token");
+    for (const path of [
+      "/helix/streams/markers",
+      "/helix/clips",
+      "/helix/chat/messages",
+    ])
+      expect(t.calls(path)).toHaveLength(1);
+    expect(t.sockets).toHaveLength(1);
+    expect(t.adapter.status().state).toBe("reconnecting");
+    await vi.advanceTimersByTimeAsync(500);
+    expect(t.sockets).toHaveLength(2);
+    t.sockets[1]!.welcome("after-backoff");
+    await vi.waitFor(() => expect(t.adapter.status().state).toBe("connected"));
+    expect(t.calls("/oauth2/token")).toHaveLength(2);
+  } finally {
+    await t.adapter.dispose();
+    vi.useRealTimers();
+  }
+});
