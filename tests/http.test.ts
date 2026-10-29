@@ -266,3 +266,36 @@ it("reconciles repeated online events without erasing the current stream", async
   expect(server.service.active!.stars).toHaveLength(1);
   expect(server.service.active!.title).toBe("Current title");
 });
+
+it("does not reuse an old stream's export when the next stream ends during rendering", async () => {
+  const adapter = new MockTwitch();
+  const { server, base } = await setup({ adapter });
+  const releases = new Map<string, (path: string) => void>();
+  const render = vi.spyOn(server.renderer, "render").mockImplementation(
+    (id) =>
+      new Promise((yes) => {
+        releases.set(id, yes);
+      }),
+  );
+  let oldEnd: Promise<Response> | undefined,
+    newEnd: Promise<Response> | undefined;
+  try {
+    await adapter.emit({ type: "stream.online", id: "old-export" });
+    oldEnd = fetch(base + "/api/mock/end", { method: "POST" });
+    await vi.waitFor(() => expect(releases.has("old-export")).toBe(true));
+    expect(server.service.active).toBeUndefined();
+    await adapter.emit({ type: "stream.online", id: "new-export" });
+    newEnd = fetch(base + "/api/mock/end", { method: "POST" });
+    await vi.waitFor(() => expect(releases.has("new-export")).toBe(true));
+    expect(render).toHaveBeenCalledTimes(2);
+    for (const [id, release] of releases) release(server.store.pngPath(id));
+    expect(await (await oldEnd).json()).toMatchObject({ id: "old-export" });
+    expect(await (await newEnd).json()).toMatchObject({ id: "new-export" });
+    expect((await server.store.stream("old-export"))!.endedAt).toBeDefined();
+    expect((await server.store.stream("new-export"))!.endedAt).toBeDefined();
+  } finally {
+    for (const [id, release] of releases) release(server.store.pngPath(id));
+    await Promise.allSettled([oldEnd, newEnd]);
+    render.mockRestore();
+  }
+});

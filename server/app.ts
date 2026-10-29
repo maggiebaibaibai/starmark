@@ -203,19 +203,22 @@ export async function createApp(options: AppOptions = {}) {
     });
     res.type("png").sendFile(path, { dotfiles: "allow" });
   });
-  let endingExport: Promise<Stream> | undefined;
+  const endingExports = new Map<string, Promise<Stream>>();
   function endAndExport() {
-    if (endingExport) return endingExport;
-    endingExport = (async () => {
+    const id = service.active?.id;
+    const existing = id ? endingExports.get(id) : undefined;
+    if (existing) return existing;
+    const job = (async () => {
       stopGenerator();
       const stream = await service.end();
       await renderer.render(stream.id, origin, { force: true });
       broadcast({ type: "exported", id: stream.id });
       return stream;
     })().finally(() => {
-      endingExport = undefined;
+      if (id) endingExports.delete(id);
     });
-    return endingExport;
+    if (id) endingExports.set(id, job);
+    return job;
   }
   // Keep lifecycle events ordered even when an adapter or HTTP control invokes them concurrently.
   // This queue is separate from Service.run(): draining must leave the state queue free.
@@ -475,7 +478,7 @@ export async function createApp(options: AppOptions = {}) {
       if (timer) clearInterval(timer);
       unsubscribe();
       await lifecycle;
-      await endingExport?.catch(() => {});
+      await Promise.allSettled(endingExports.values());
       await service.dispose();
       await renderer.close();
       for (const socket of wss.clients) socket.terminate();
