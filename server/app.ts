@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import { access, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { WebSocketServer, WebSocket } from "ws";
-import { defaults, type Settings, type User } from "./engine.js";
+import { defaults, type Settings, type Stream, type User } from "./engine.js";
 import { Store, validId } from "./store.js";
 import { Service } from "./service.js";
 import { MockTwitch, type TwitchAdapter } from "./twitch.js";
@@ -203,25 +203,39 @@ export async function createApp(options: AppOptions = {}) {
     });
     res.type("png").sendFile(path, { dotfiles: "allow" });
   });
-  async function endAndExport() {
-    stopGenerator();
-    const stream = await service.end();
-    await renderer.render(stream.id, origin, { force: true });
-    broadcast({ type: "exported", id: stream.id });
-    return stream;
+  let endingExport: Promise<Stream> | undefined;
+  function endAndExport() {
+    if (endingExport) return endingExport;
+    endingExport = (async () => {
+      stopGenerator();
+      const stream = await service.end();
+      await renderer.render(stream.id, origin, { force: true });
+      broadcast({ type: "exported", id: stream.id });
+      return stream;
+    })().finally(() => {
+      endingExport = undefined;
+    });
+    return endingExport;
   }
+  // Keep lifecycle events ordered even when an adapter or HTTP control invokes them concurrently.
+  // This queue is separate from Service.run(): draining must leave the state queue free.
+  let lifecycle = Promise.resolve();
   const unsubscribe = adapter.subscribe(async (event) => {
-    if (event.type === "stream.online") {
-      if (event.id && (await store.stream(event.id))?.endedAt !== undefined)
-        return;
-      if (service.active?.id === event.id)
-        await service.updateStream({ ...event, type: "stream.update" });
-      else {
-        if (service.active) await endAndExport();
-        await service.start(event);
-      }
-    } else if (event.type === "stream.offline") {
-      if (service.active) await endAndExport();
+    if (event.type === "stream.online" || event.type === "stream.offline") {
+      const job = lifecycle.then(async () => {
+        if (event.type === "stream.online") {
+          if (event.id && (await store.stream(event.id))?.endedAt !== undefined)
+            return;
+          if (service.active?.id === event.id)
+            await service.updateStream({ ...event, type: "stream.update" });
+          else {
+            if (service.active) await endAndExport();
+            await service.start(event);
+          }
+        } else if (service.active) await endAndExport();
+      });
+      lifecycle = job.catch(() => {});
+      await job;
     } else if (event.type === "stream.update")
       await service.updateStream(event);
     else if (event.type === "connection.state") broadcast(event);
@@ -460,6 +474,8 @@ export async function createApp(options: AppOptions = {}) {
       stopGenerator();
       if (timer) clearInterval(timer);
       unsubscribe();
+      await lifecycle;
+      await endingExport?.catch(() => {});
       await service.dispose();
       await renderer.close();
       for (const socket of wss.clients) socket.terminate();

@@ -409,10 +409,8 @@ export class Service {
     });
   }
   end(): Promise<Stream> {
-    if (this.ending)
-      return Promise.reject(
-        new ValidationError("Stream is already ending", 409),
-      );
+    // Concurrent offline/online handlers join the same drain instead of losing the next stream.
+    if (this.ending) return this.ending;
     this.ending = this.finishStream().finally(() => {
       this.ending = undefined;
       this.closing = false;

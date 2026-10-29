@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   mkdir,
   mkdtemp,
@@ -387,3 +387,87 @@ it("shows an enabled Connect Twitch button in real mode without starting OAuth o
     await rm(liveRoot, { recursive: true, force: true });
   }
 });
+
+it.each(["offline event", "existing service drain"])(
+  "fast restart during %s opens the next stream and exports the old card",
+  async (source) => {
+    const dataDir = await mkdtemp(resolve(".cache/tests/restart-"));
+    const adapter = new MockTwitch();
+    let now = Date.UTC(2026, 9, 28, 20);
+    const local = await createApp({
+      dataDir,
+      adapter,
+      clock: () => now,
+      tick: false,
+    });
+    await local.listen(0);
+    let release!: (vod: { id: string }) => void;
+    const gate = new Promise<{ id: string }>((yes) => {
+      release = yes;
+    });
+    const archive = vi.spyOn(adapter, "getArchiveVod").mockReturnValue(gate);
+    const render = vi.spyOn(local.renderer, "render");
+    let offline: Promise<unknown> | undefined,
+      online: Promise<void> | undefined;
+    try {
+      await adapter.emit({ type: "stream.online", id: "old-stream" });
+      await local.service.message(
+        { id: "old-viewer", name: "OldViewer" },
+        "!star old memory",
+      );
+      offline =
+        source === "offline event"
+          ? adapter.emit({ type: "stream.offline" })
+          : local.service.end();
+      await vi.waitFor(() => expect(archive).toHaveBeenCalledOnce());
+      now += 20_000;
+      online = adapter.emit({
+        type: "stream.online",
+        id: "new-stream",
+        startedAt: now,
+      });
+      // Observe rejection immediately so the regression fails without an unhandled promise.
+      const opened = online.then(
+        () => true,
+        () => false,
+      );
+      await new Promise<void>((yes) => setImmediate(yes));
+      expect(local.service.active?.id).toBe("old-stream");
+      release({ id: "mock-old-vod" });
+      await offline;
+      expect(await opened).toBe(true);
+      expect(local.service.active?.id).toBe("new-stream");
+      await adapter.emit({
+        type: "channel.chat.message",
+        user: { id: "new-viewer", name: "NewViewer" },
+        text: "!star new memory",
+        messageId: "new-chat",
+        at: now,
+      });
+      expect(local.service.active!.stars).toHaveLength(1);
+      expect(local.service.active!.stars[0]!.owner.id).toBe("new-viewer");
+      const old = await local.store.stream("old-stream");
+      expect(old!.endedAt).toBeDefined();
+      expect(old!.stars).toHaveLength(1);
+      expect(old!.stars[0]!.owner.id).toBe("old-viewer");
+      expect(old!.vodId).toBe("mock-old-vod");
+      expect(archive).toHaveBeenCalledOnce();
+      expect(render).toHaveBeenCalledExactlyOnceWith(
+        "old-stream",
+        expect.any(String),
+        { force: true },
+      );
+      const png = await readFile(local.store.pngPath("old-stream"));
+      expect(png.readUInt32BE(16)).toBe(1080);
+      expect(png.readUInt32BE(20)).toBe(1350);
+    } finally {
+      release({ id: "mock-old-vod" });
+      await Promise.allSettled([offline, online]);
+      await local.close();
+      archive.mockRestore();
+      render.mockRestore();
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  },
+  30_000,
+);
