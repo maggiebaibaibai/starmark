@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Starmark Backdrop</title>
+<!-- 直播背景：雨停以后的夜空。原创，全部现画，没有图片 字体 音乐。OBS 里当「浏览器」源用本地文件打开，1920×1080 -->
+<style>
+  :root { --ink:#07081a; --deep:#0f1230; --star:#fff6dc; --gold:#ffd27a; --rose:#ff9fb8; --teal:#5fe0c8; --violet:#8f7dff; }
+  html, body { margin:0; height:100%; background:var(--ink); overflow:hidden; }
+  canvas { display:block; width:100vw; height:100vh; }
+</style>
+</head>
+<body>
+<canvas id="sky" width="1920" height="1080"></canvas>
+<script>
+(() => {
+  const W = 1920, H = 1080
+  const cv = document.getElementById('sky'), cx = cv.getContext('2d')
+  // 固定种子：每次打开都是同一片天，录几遍画面都对得上
+  let seed = 20261031
+  const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296)
+
+  // 三层星：远的小而慢，近的大而快，一起往左飘
+  const layers = [
+    { n: 900, r: [0.35, 0.85], speed: 2.2, a: [0.2, 0.6] },
+    { n: 260, r: [0.7, 1.3], speed: 5.5, a: [0.4, 0.85] },
+    { n: 46,  r: [1.2, 2.1], speed: 11,  a: [0.7, 1] },
+  ]
+  const tint = ['#fff6dc', '#fff6dc', '#fff6dc', '#dfe4ff', '#ffe6c2', '#d8fff6']
+  const stars = []
+  layers.forEach((L, li) => {
+    for (let i = 0; i < L.n; i++) {
+      const y = Math.pow(rnd(), 1.35) * H * 0.9 // 越往上越密，地平线那边稀
+      stars.push({ li, x: rnd() * W, y, r: L.r[0] + rnd() * (L.r[1] - L.r[0]), a: L.a[0] + rnd() * (L.a[1] - L.a[0]),
+        tw: 0.4 + rnd() * 1.6, ph: rnd() * Math.PI * 2, c: tint[(rnd() * tint.length) | 0] })
+    }
+  })
+
+  // 银河：一条斜着的星河。先铺一层很淡的光，再撒密密的星尘，中间压一道暗的尘埃带，画进离屏的图，整张慢慢往左挪
+  const gauss = () => { let u = 0, v = 0; while (!u) u = rnd(); while (!v) v = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v) }
+  const mid = (x) => H * 0.6 - (x / (W * 2)) * H * 0.22 + Math.sin(x / (W * 2) * 7.5) * 55
+  const band = document.createElement('canvas'); band.width = W * 2; band.height = H
+  {
+    const b = band.getContext('2d')
+    for (let i = 0; i < 520; i++) {
+      const x = rnd() * W * 2, y = mid(x) + gauss() * 75, r = 26 + rnd() * 90
+      const hue = rnd() < 0.6 ? '143,125,255' : rnd() < 0.55 ? '95,224,200' : '255,159,184'
+      const g = b.createRadialGradient(x, y, 0, x, y, r)
+      g.addColorStop(0, `rgba(${hue},${0.022 + rnd() * 0.03})`); g.addColorStop(1, `rgba(${hue},0)`)
+      b.fillStyle = g; b.beginPath(); b.arc(x, y, r, 0, Math.PI * 2); b.fill()
+    }
+    for (let i = 0; i < 26000; i++) { // 星尘：越靠中线越密
+      const x = rnd() * W * 2, y = mid(x) + gauss() * 62
+      const a = 0.05 + Math.pow(rnd(), 2.2) * 0.55
+      b.fillStyle = rnd() < 0.12 ? `rgba(216,255,246,${a})` : rnd() < 0.15 ? `rgba(255,230,194,${a})` : `rgba(255,246,220,${a})`
+      b.fillRect(x, y, rnd() < 0.9 ? 1 : 1.5, rnd() < 0.9 ? 1 : 1.5)
+    }
+    b.globalCompositeOperation = 'destination-out' // 尘埃带：沿中线偏一点，把光吃掉一道
+    for (let i = 0; i < 260; i++) {
+      const x = rnd() * W * 2, y = mid(x) + 8 + gauss() * 16 + Math.sin(x / 140) * 10, r = 10 + rnd() * 34
+      const g = b.createRadialGradient(x, y, 0, x, y, r)
+      g.addColorStop(0, `rgba(0,0,0,${0.28 + rnd() * 0.3})`); g.addColorStop(1, 'rgba(0,0,0,0)')
+      b.fillStyle = g; b.beginPath(); b.arc(x, y, r, 0, Math.PI * 2); b.fill()
+    }
+  }
+
+  // 低云：雨刚停，地平线上还趴着一层云，底下被城里的光映成玫瑰色，比星河挪得快一点
+  const cloud = document.createElement('canvas'); cloud.width = W * 2; cloud.height = 360
+  {
+    const c = cloud.getContext('2d')
+    for (let i = 0; i < 340; i++) {
+      const x = rnd() * W * 2, y = 150 + rnd() * 200 + Math.sin(x / 300) * 30, rx = 80 + rnd() * 220, ry = 22 + rnd() * 46
+      const g = c.createRadialGradient(x, y, 0, x, y, rx)
+      const top = y < 220
+      g.addColorStop(0, top ? 'rgba(60,44,98,0.32)' : 'rgba(34,26,66,0.42)'); g.addColorStop(1, 'rgba(34,26,66,0)')
+      c.save(); c.translate(x, y); c.scale(1, ry / rx); c.translate(-x, -y)
+      c.fillStyle = g; c.beginPath(); c.arc(x, y, rx, 0, Math.PI * 2); c.fill(); c.restore()
+    }
+    c.globalCompositeOperation = 'source-atop' // 云顶镶一道很淡的玫瑰边
+    const rim = c.createLinearGradient(0, 120, 0, 260)
+    rim.addColorStop(0, 'rgba(255,159,184,0.22)'); rim.addColorStop(1, 'rgba(255,159,184,0)')
+    c.fillStyle = rim; c.fillRect(0, 0, W * 2, 360)
+  }
+
+  // 细细的颗粒，压掉渐变的色阶
+  const grain = document.createElement('canvas'); grain.width = 256; grain.height = 256
+  {
+    const g = grain.getContext('2d'), img = g.createImageData(256, 256)
+    for (let i = 0; i < img.data.length; i += 4) { const v = rnd() * 255; img.data[i] = img.data[i + 1] = img.data[i + 2] = v; img.data[i + 3] = 10 }
+    g.putImageData(img, 0, 0)
+  }
+  const grainPat = cx.createPattern(grain, 'repeat')
+
+  // 雨停以后：地平线上还压着一层潮气，偶尔有一两滴雨丝落下来
+  const drops = Array.from({ length: 14 }, () => ({ x: rnd() * W, y: rnd() * H, v: 260 + rnd() * 220, l: 18 + rnd() * 26, a: 0.05 + rnd() * 0.08 }))
+
+  // 流星：二十到四十秒来一颗，金色
+  let meteor = null, nextMeteor = 6
+  const spawnMeteor = (t) => {
+    const x = W * (0.35 + rnd() * 0.6), y = H * (0.05 + rnd() * 0.3)
+    meteor = { x, y, born: t, life: 1.6 + rnd() * 0.8, ang: Math.PI * (0.78 + rnd() * 0.1), len: 260 + rnd() * 180, dist: 520 + rnd() * 380 }
+    nextMeteor = t + 20 + rnd() * 20
+  }
+
+  const drawBackground = () => {
+    const g = cx.createLinearGradient(0, 0, 0, H)
+    g.addColorStop(0, '#05061a'); g.addColorStop(0.55, '#0f1230'); g.addColorStop(0.86, '#1b1844'); g.addColorStop(1, '#2a1d4a')
+    cx.fillStyle = g; cx.fillRect(0, 0, W, H)
+    const glow = cx.createRadialGradient(W * 0.72, H * 1.05, 0, W * 0.72, H * 1.05, H * 0.75) // 远处城里的光，偏玫瑰色
+    glow.addColorStop(0, 'rgba(255,159,184,0.16)'); glow.addColorStop(0.5, 'rgba(143,125,255,0.06)'); glow.addColorStop(1, 'rgba(143,125,255,0)')
+    cx.fillStyle = glow; cx.fillRect(0, 0, W, H)
+  }
+
+  let last = performance.now(), t0 = last
+  const frame = (now) => {
+    const dt = Math.min(0.05, (now - last) / 1000); last = now
+    const t = (now - t0) / 1000
+    drawBackground()
+
+    const bx = -((t * 4) % W) // 银河一圈 8 分钟左右
+    cx.globalCompositeOperation = 'lighter'
+    cx.drawImage(band, bx, 0); cx.drawImage(band, bx + W * 2, 0)
+    cx.globalCompositeOperation = 'source-over'
+
+    for (const s of stars) {
+      s.x -= layers[s.li].speed * dt
+      if (s.x < -4) s.x += W + 8
+      const a = s.a * (0.65 + 0.35 * Math.sin(t * s.tw + s.ph))
+      cx.globalAlpha = a; cx.fillStyle = s.c
+      cx.beginPath(); cx.arc(s.x, s.y, s.r, 0, Math.PI * 2); cx.fill()
+      if (s.li === 2 && a > 0.82) { // 最亮的几颗带一点十字光
+        cx.globalAlpha = (a - 0.82) * 2.2; cx.fillRect(s.x - s.r * 4, s.y - 0.4, s.r * 8, 0.8); cx.fillRect(s.x - 0.4, s.y - s.r * 4, 0.8, s.r * 8)
+      }
+    }
+    cx.globalAlpha = 1
+
+    cx.strokeStyle = 'rgba(223,228,255,1)'; cx.lineWidth = 1
+    for (const d of drops) {
+      d.y += d.v * dt; d.x -= d.v * dt * 0.12
+      if (d.y > H + 40) { d.y = -40 - rnd() * H; d.x = rnd() * W }
+      cx.globalAlpha = d.a; cx.beginPath(); cx.moveTo(d.x, d.y); cx.lineTo(d.x + d.l * 0.12, d.y - d.l); cx.stroke()
+    }
+    cx.globalAlpha = 1
+
+    if (!meteor && t > nextMeteor) spawnMeteor(t)
+    if (meteor) {
+      const p = (t - meteor.born) / meteor.life
+      if (p >= 1) meteor = null
+      else {
+        const e = 1 - Math.pow(1 - p, 2.2)
+        const hx = meteor.x + Math.cos(meteor.ang) * meteor.dist * e, hy = meteor.y + Math.sin(meteor.ang) * meteor.dist * e
+        const tx = hx - Math.cos(meteor.ang) * meteor.len * (1 - p * 0.5), ty = hy - Math.sin(meteor.ang) * meteor.len * (1 - p * 0.5)
+        const fade = p < 0.15 ? p / 0.15 : 1 - (p - 0.15) / 0.85
+        const g = cx.createLinearGradient(tx, ty, hx, hy)
+        g.addColorStop(0, 'rgba(255,210,122,0)'); g.addColorStop(1, `rgba(255,236,190,${0.9 * fade})`)
+        cx.strokeStyle = g; cx.lineWidth = 2; cx.lineCap = 'round'
+        cx.beginPath(); cx.moveTo(tx, ty); cx.lineTo(hx, hy); cx.stroke()
+        cx.fillStyle = `rgba(255,246,220,${fade})`; cx.beginPath(); cx.arc(hx, hy, 2.2, 0, Math.PI * 2); cx.fill()
+      }
+    }
+
+    const cxo = -((t * 9) % (W * 2)) // 低云一圈四分钟左右
+    cx.drawImage(cloud, cxo, H - 360); cx.drawImage(cloud, cxo + W * 2, H - 360)
+    cx.fillStyle = grainPat; cx.fillRect(0, 0, W, H)
+
+    // 最底下压暗一点，给星图那条时间带留出干净的底
+    const v = cx.createLinearGradient(0, H - 220, 0, H)
+    v.addColorStop(0, 'rgba(7,8,26,0)'); v.addColorStop(1, 'rgba(7,8,26,0.55)')
+    cx.fillStyle = v; cx.fillRect(0, H - 220, W, 220)
+
+    requestAnimationFrame(frame)
+  }
+  requestAnimationFrame(frame)
+})()
+</script>
+</body>
+</html>
