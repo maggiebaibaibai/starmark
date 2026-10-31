@@ -229,7 +229,7 @@ describe("end-to-end mock run", () => {
       viewport: { width: 1920, height: 1080 },
     });
     co.on("pageerror", (e) => errors.push(e.message));
-    await co.goto(base + "/coldopen?play=1");
+    await co.goto(base + "/coldopen?play=1&skip");
     await co.waitForFunction(
       () => document.documentElement.dataset.playing === "true",
     );
