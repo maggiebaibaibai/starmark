@@ -29,7 +29,11 @@ export function coldopenPage() {
   };
   $("skip").onclick = stop;
   // The skip button is for a local preview window; on the OBS output it would be seen by viewers. Show it only with ?skip.
-  if (!new URLSearchParams(location.search).has("skip")) $("skip").style.display = "none";
+  // Same for the "stream.online → cold open" toast: it is a debug hint, keep it to the local preview.
+  if (!new URLSearchParams(location.search).has("skip")) {
+    $("skip").style.display = "none";
+    $("toast").style.display = "none";
+  }
   addEventListener("keydown", (event) => {
     if (event.key === "Escape") stop();
   });
