@@ -203,6 +203,7 @@ export function topThree(stars: Star[]): Star[] {
     .sort(
       (a, b) =>
         b.lighters.length - a.lighters.length ||
+        Number(Boolean(b.reason.trim())) - Number(Boolean(a.reason.trim())) ||
         a.openedAt - b.openedAt ||
         a.id.localeCompare(b.id),
     )

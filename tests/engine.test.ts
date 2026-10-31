@@ -119,6 +119,25 @@ describe("pure star engine", () => {
     expect(s.stars).toEqual(before);
     expect(topThree([])).toEqual([]);
   });
+  it("breaks equal-count ties by reason, then time, then stable ID without mutation", () => {
+    const base = star(fresh(), "owner", 0).stream.stars[0]!;
+    const stars = [
+      { ...base, id: "empty", openedAt: 0, reason: "" },
+      { ...base, id: "blank", openedAt: 1, reason: " \t " },
+      { ...base, id: "later", openedAt: 30, reason: "first night live" },
+      { ...base, id: "b", openedAt: 20, reason: "that sky" },
+      { ...base, id: "a", openedAt: 20, reason: "another reason" },
+    ];
+    const before = structuredClone(stars);
+    expect(topThree(stars).map((s) => s.id)).toEqual(["a", "b", "later"]);
+    expect(topThree([...stars].reverse()).map((s) => s.id)).toEqual([
+      "a", "b", "later",
+    ]);
+    expect(stars).toEqual(before);
+    const popular = { ...base, id: "popular", lighters: [user("a"), user("b")] };
+    expect(topThree([...stars, popular])[0]?.id).toBe("popular");
+    expect(topThree(stars.slice(0, 2)).map((s) => s.id)).toEqual(["empty", "blank"]);
+  });
   it("restricts !unstar to mods/broadcaster; retains clocks; permits subsequent new IDs", () => {
     const s = star(fresh(), "a", 0).stream;
     expect(command(s, user("x"), "!unstar", 1, defaults).accepted).toBe(false);

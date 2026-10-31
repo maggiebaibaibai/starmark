@@ -49,7 +49,7 @@ For a different demo port: `STARMARK_URL=http://localhost:4318 npm run demo`. De
 
 Uncheck **Mock VOD saving** before closing a star to exercise marker 404 warnings and clip fallback. With no archive and fewer than three lighters, the star has a saved timestamp but no playable link. All `mock-vod-*` and `mock-clip-*` IDs are deliberately fictional; cold open uses the designed full-screen text/gradient treatment rather than requesting nonexistent clips. No Twitch account is needed.
 
-**Counts:** a lighter is a unique viewer _within a star_. The card headline, dashboard and JSON use the sum of those per-star counts; a viewer who lights two different stars contributes twice. Ties in top-three ranking go to the earlier moment, then stable ID. Card links use the original ignition offset, not the later marker-close position. Bot echoes say `N of you`, including the owner. Markers say `★ @owner +N-1`, counting the other viewers: three lighters produce `3 of you` and `★ @owner +2`.
+**Counts:** a lighter is a unique viewer _within a star_. The card headline, dashboard and JSON use the sum of those per-star counts; a viewer who lights two different stars contributes twice. Ties in top-three ranking prefer a non-empty reason, then the earlier moment, then stable ID. Card links use the original ignition offset, not the later marker-close position. Bot echoes say `N of you`, including the owner. Markers say `★ @owner +N-1`, counting the other viewers: three lighters produce `3 of you` and `★ @owner +2`.
 
 ## OBS: three browser sources
 
