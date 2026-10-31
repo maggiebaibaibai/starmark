@@ -70,7 +70,7 @@ Overlay options (coordinates are in the 1920 × 1080 design canvas):
 /overlay?accent=ff9fb8&reasons=0&aurora=0
 ```
 
-`pos` is bottom/top/compact. Compact `x`, `y`, `width` are clamped to the canvas. `accent` accepts a 3- or 6-digit hex color (URL-encode `#` if included). `reasons=0|1` overrides the names-only display setting. Aurora defaults on for bottom and off for top/compact. The time axis grows with the elapsed stream; bursts last approximately 2.5 seconds, with at most two active/queued bursts. Excess events go straight into the band. The command example appears for five seconds after each burst.
+`pos` is bottom/top/compact. Compact `x`, `y`, `width` are clamped to the canvas and keep the top-left 400×200 webcam area clear. `accent` accepts a 3- or 6-digit hex color (URL-encode `#` if included). `reasons=0|1` overrides the names-only display setting. Aurora defaults on for bottom and off for top/compact. The time axis grows with the elapsed stream. Ignition starts with a 320 px star SVG, eases smaller after about two seconds, and stays open until the merge window closes (normally 15 seconds). Joiner names pop in live and the star grows slightly, capped at six joiners. At most two bursts are active/queued; excess events go straight into the unchanged band, and queued stars retain their original closing deadline. The command example appears for five seconds after each burst.
 
 Card routes:
 

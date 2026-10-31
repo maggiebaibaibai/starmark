@@ -1,3 +1,4 @@
+import { advanceIgnition, ignitionGrowth, ignitionPhase, isOpen } from "./ignition.js";
 import {
   $,
   esc,
@@ -5,7 +6,6 @@ import {
   starPath,
   svgStar,
   topThree,
-  withLine,
   type Snapshot,
   type Star,
 } from "./visuals.js";
@@ -37,7 +37,9 @@ export function overlayPage() {
     return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : fallback;
   };
   const cx = bounded("x", 1480, 0, 1800),
-    cy = bounded("y", 330, 0, 1000),
+    requestedY = bounded("y", 330, 0, 1000),
+    // Compact sources stay below the reserved webcam even with custom x/y.
+    cy = cx < 400 ? Math.max(260, requestedY) : requestedY,
     cw = bounded("width", 380, 120, 1920 - cx);
   const layouts: Record<string, Layout> = {
     bottom: {
@@ -47,7 +49,7 @@ export function overlayPage() {
       up: -1,
       head: [120, 1000],
       ex: [1800, 1000],
-      burstY: 780,
+      burstY: 690,
     },
     top: {
       L: 120,
@@ -56,7 +58,7 @@ export function overlayPage() {
       up: 1,
       head: [120, 62],
       ex: [1420, 62],
-      burstY: 330,
+      burstY: 400,
     },
     compact: {
       L: cx,
@@ -65,7 +67,7 @@ export function overlayPage() {
       up: 1,
       head: [cx, cy + 16],
       ex: [cx + cw, cy + 58],
-      burstY: Math.min(800, cy + 270),
+      burstY: Math.max(620, Math.min(790, cy + 270)),
     },
   };
   const lay = layouts[pos] ?? layouts.bottom!;
@@ -89,7 +91,7 @@ export function overlayPage() {
     streamId: string | undefined,
     active: string | undefined,
     queue: string[] = [],
-    burstTimer: ReturnType<typeof setTimeout> | undefined,
+    fading: { id: string; until: number } | undefined,
     exampleTimer: ReturnType<typeof setTimeout> | undefined,
     examples = 0;
   const now = () => (state ? state.now + (Date.now() - received) : Date.now());
@@ -121,84 +123,119 @@ export function overlayPage() {
     $("play").style.cssText =
       `left:${state?.active ? lay.R : lay.L}px;top:${lay.Y}px`;
     $("stars").innerHTML = stars
-      .filter((s) => s.id !== active && !queue.includes(s.id))
+      .filter((s) => s.id !== active && s.id !== fading?.id && !queue.includes(s.id))
       .map(
         (s) =>
-          `<div class="st ${now() - s.openedAt < 6000 ? "labeled" : ""}" style="left:${x(s.offsetSeconds)}px;top:${lay.Y - lay.up * (10 + hash(s.owner.name) * 22)}px"><svg width="40" height="40" viewBox="-20 -20 40 40"><path class="tw" fill="${top.includes(s.id) ? "var(--gold)" : "var(--star)"}" d="${starPath(Math.min(18, 4 + Math.sqrt(s.lighters.length) * 1.6))}"/></svg><div class="tag">@${esc(s.owner.name)}</div></div>`,
+          `<div data-star-id="${esc(s.id)}" class="st ${now() - s.openedAt < 6000 ? "labeled" : ""}" style="left:${x(s.offsetSeconds)}px;top:${lay.Y - lay.up * (10 + hash(s.owner.name) * 22)}px"><svg width="40" height="40" viewBox="-20 -20 40 40"><path class="tw" fill="${top.includes(s.id) ? "var(--gold)" : "var(--star)"}" d="${starPath(Math.min(18, 4 + Math.sqrt(s.lighters.length) * 1.6))}"/></svg><div class="tag">@${esc(s.owner.name)}</div></div>`,
       )
       .join("");
   }
   function updateBurst() {
     const s = state?.active?.stars.find((s) => s.id === active),
-      b = $("bursts").firstElementChild;
+      b = $("bursts").querySelector<HTMLElement>(".burst:not(.settling)");
     if (!s || !b) return;
-    const join = b.querySelector(".j")!;
-    join.textContent = withLine(s);
+    if (b.dataset.phase !== "open") b.dataset.phase = ignitionPhase(s, now());
+    b.style.setProperty("--growth", String(ignitionGrowth(s.lighters.length)));
+    const join = b.querySelector<HTMLElement>(".j")!;
+    const joiners = s.lighters.slice(1, 4);
+    join.querySelector<HTMLElement>(".join-prefix")!.hidden = !joiners.length;
+    for (const chip of join.querySelectorAll<HTMLElement>("[data-user-id]")) {
+      if (!joiners.some((user) => user.id === chip.dataset.userId)) chip.remove();
+    }
+    for (const user of joiners) {
+      if (Array.from(join.children).some((chip) => (chip as HTMLElement).dataset.userId === user.id)) continue;
+      const chip = document.createElement("span");
+      chip.className = "join-chip";
+      chip.dataset.userId = user.id;
+      chip.textContent = "@" + user.name + " ";
+      join.append(chip);
+    }
+    const extra = Math.max(0, s.lighters.length - 4);
+    const previous = join.querySelector(".join-extra");
+    if (previous?.textContent !== (extra ? `+${extra}` : undefined)) {
+      previous?.remove();
+      if (extra) {
+        const chip = document.createElement("span");
+        chip.className = "join-chip join-extra";
+        chip.textContent = `+${extra}`;
+        join.append(chip);
+      }
+    }
     const reason = b.querySelector<HTMLElement>(".r");
     if (reason) reason.hidden = !showReasons();
   }
-  function pump() {
-    if (active || !queue.length) return;
-    active = queue.shift();
-    const s = state?.active?.stars.find((s) => s.id === active);
-    if (!s) {
-      active = undefined;
-      pump();
-      return;
-    }
+  function showBurst(s: Star) {
     const bx =
       pos === "compact"
-        ? Math.max(420, Math.min(1500, lay.L + (lay.R - lay.L) / 2))
-        : Math.max(420, Math.min(1500, x(s.offsetSeconds)));
-    $("bursts").innerHTML =
-      `<div class="burst" style="left:${bx}px;top:${lay.burstY}px"><div class="halo"></div><span class="ring"></span>${svgStar()}<div class="u">@${esc(s.owner.name)}</div><div class="r" ${showReasons() ? "" : "hidden"}>${esc(s.reason)}</div><div class="j"></div></div>`;
+        ? Math.max(450, Math.min(1470, lay.L + (lay.R - lay.L) / 2))
+        : Math.max(450, Math.min(1470, x(s.offsetSeconds)));
+    const b = document.createElement("div");
+    b.className = "burst";
+    b.dataset.starId = s.id;
+    b.style.cssText = `left:${bx}px;top:${lay.burstY}px`;
+    b.innerHTML = `<div class="halo"></div><span class="ring"></span><div class="glyph-slot"><div class="glyph-open"><div class="glyph-growth">${svgStar(140, 320)}</div></div></div><div class="u">@${esc(s.owner.name)}</div><div class="r" ${showReasons() ? "" : "hidden"}>${esc(s.reason)}</div><div class="j"><span class="join-prefix" hidden>with </span></div>`;
+    $("bursts").append(b);
     updateBurst();
-    renderBand();
-    burstTimer = setTimeout(() => {
-      const b = $("bursts").firstElementChild as HTMLElement | null;
-      if (b) b.style.opacity = "0";
-      burstTimer = setTimeout(() => {
-        active = undefined;
-        $("bursts").replaceChildren();
-        renderBand();
-        $("ex").textContent =
-          `try: !star ${["that dodge", "best song tonight", "the cat is back", "gg"][examples++ % 4]}`;
-        $("ex").style.opacity = "1";
-        clearTimeout(exampleTimer);
-        exampleTimer = setTimeout(() => ($("ex").style.opacity = "0"), 5000);
-        pump();
-      }, 250);
-    }, 2250);
+  }
+  function showExample() {
+    $("ex").textContent =
+      `try: !star ${["that dodge", "best song tonight", "the cat is back", "gg"][examples++ % 4]}`;
+    $("ex").style.opacity = "1";
+    clearTimeout(exampleTimer);
+    exampleTimer = setTimeout(() => ($("ex").style.opacity = "0"), 5000);
+  }
+  function syncIgnition(opened: string[] = []) {
+    const stars = state?.active?.stars ?? [];
+    const previous = active;
+    const next = advanceIgnition({ active, queue }, stars, now(), state?.settings.mergeMs ?? 15000, opened);
+    active = next.active;
+    queue = next.queue;
+    if (previous && previous !== active) {
+      // Fade for 250 ms as before, but release the queue immediately. A queued
+      // star only gets its remaining open time, never a fresh 15-second timer.
+      $("bursts").querySelector(".settling")?.remove();
+      const b = $("bursts").querySelector<HTMLElement>(".burst");
+      if (b) {
+        b.classList.add("settling");
+        b.dataset.phase = "settling";
+        fading = { id: previous, until: Date.now() + 250 };
+      }
+    }
+    if (fading && Date.now() >= fading.until) {
+      $("bursts").querySelector(".settling")?.remove();
+      fading = undefined;
+      showExample();
+      renderBand();
+    }
+    if (active && active !== previous) showBurst(stars.find((s) => s.id === active)!);
+    updateBurst();
+    if (active !== previous) renderBand();
   }
   function update(next: Snapshot, events: { type: string; star: Star }[] = []) {
-    const first = !state;
     state = next;
     received = Date.now();
+    const opened: string[] = [];
     if (streamId !== next.active?.id) {
       streamId = next.active?.id;
       seen = new Set(next.active?.stars.map((s) => s.id));
       queue = [];
       active = undefined;
-      clearTimeout(burstTimer);
+      fading = undefined;
       clearTimeout(exampleTimer);
       $("bursts").replaceChildren();
       $("ex").style.opacity = "0";
+      // Connecting midway through a window still shows its remaining open time.
+      opened.push(...(next.active?.stars ?? [])
+        .filter((s) => isOpen(s, next.now, next.settings.mergeMs)).map((s) => s.id));
     }
-    for (const event of events)
+    for (const event of events) {
       if (event.type === "opened" && !seen.has(event.star.id)) {
         seen.add(event.star.id);
-        if ((active ? 1 : 0) + queue.length < 2) queue.push(event.star.id);
+        opened.push(event.star.id);
       }
-    if (first) for (const star of next.active?.stars ?? []) seen.add(star.id);
-    queue = queue.filter((id) => next.active?.stars.some((s) => s.id === id));
-    if (active && !next.active?.stars.some((s) => s.id === active)) {
-      clearTimeout(burstTimer);
-      active = undefined;
-      $("bursts").replaceChildren();
     }
+    syncIgnition(opened);
     renderBand();
-    updateBurst();
-    pump();
   }
   const ag = $<HTMLCanvasElement>("aurora").getContext("2d")!;
   function animate(ts: number) {
@@ -242,6 +279,8 @@ export function overlayPage() {
     requestAnimationFrame(animate);
   }
   requestAnimationFrame(animate);
+  // Deadline fallback also works when no more state messages arrive.
+  setInterval(syncIgnition, 50);
   setInterval(renderBand, 1000);
   return {
     update,

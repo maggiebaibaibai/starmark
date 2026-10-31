@@ -43,7 +43,7 @@ Your chat writes the highlight reel. Viewers type `!star <why>` during a live st
 
 - Transparent page. Positions: `bottom` (default), `top`, `compact` (under the cam; x/y/width configurable). Query params override: `?pos=&accent=&aurora=0&reasons=0`.
 - Thin axis line, star per moment along stream time (axis scales with stream length so far, not a fixed 3 h), gold for the current top 3.
-- Ignite burst: big star 160 px, name 60 px, reason 44 px serif italic, lighters line updating live (`@a @b @c +N`), ~2.5 s, then settles into the band. Queue max 2 bursts; extra stars go straight to the band.
+- Ignite burst (updated after the 2026-10-31 rehearsal): 320 px SVG with the original star path at twice its old size, name 60 px, reason 44 px serif italic. After ~2 s the glyph eases smaller in place, staying visible for the star's remaining merge window (normally 15 s, or until an earlier server close). The lighters line updates live (`with @a @b @c +N`), new joiner chips pop subtly, and the glyph grows slightly with each joiner up to a cap. Then it fades into the unchanged band. Queue max 2 bursts; extra or expired queued stars go straight to the band. Queueing never extends a star's original deadline. Compact keeps the top-left 400×200 webcam area clear.
 - Aurora (chat speed) optional, soft blurred curtain, off by default for `top`/`compact`.
 - After each star, a rotating example `try: !star that dodge` for 5 s. No permanent title other than `TONIGHT'S SKY · N ★` small mono.
 

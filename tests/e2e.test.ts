@@ -141,7 +141,7 @@ describe("end-to-end mock run", () => {
             ?.textContent?.includes("@join0_2"),
         );
         expect(await overlay.locator(".burst svg").getAttribute("width")).toBe(
-          "160",
+          "320",
         );
         await overlay.screenshot({
           path: ".cache/overlay-burst.png",
@@ -557,3 +557,122 @@ it("omits empty title rows and local footer URLs while retaining public links an
     }
   } finally { await page.close(); }
 });
+
+async function withMockOverlay(
+  run: (page: import("playwright").Page, send: (path: string, body?: object) => Promise<void>) => Promise<void>,
+  virtualClock = false,
+) {
+  const dataDir = await mkdtemp(resolve(".cache/tests/ignition-"));
+  const local = await createApp({ dataDir, tick: false, clock: () => Date.UTC(2026, 9, 31, 20) });
+  const origin = await local.listen(0);
+  const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+  if (virtualClock) await page.clock.install();
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  const send = async (path: string, body: object = {}) => {
+    const response = await fetch(origin + path, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    expect(response.status).toBe(200);
+  };
+  try {
+    const connected = page.waitForEvent("websocket").then((ws) => ws.waitForEvent("framereceived"));
+    await page.goto(origin + "/overlay");
+    await connected;
+    await page.waitForFunction(() => document.documentElement.dataset.ready === "true");
+    await send("/api/mock/start", { title: "Ignition check" });
+    await send("/api/mock/advance", { ms: 61000 });
+    await send("/api/mock/chat", { name: "skywatcher", text: "!star first night live" });
+    await page.waitForSelector(".burst");
+    await run(page, send);
+    expect(pageErrors).toEqual([]);
+  } finally {
+    await page.close();
+    await local.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+}
+
+it("keeps ignition visible for joiners at +5 s and +9 s, then settles after close", async () => {
+  await withMockOverlay(async (page, send) => {
+    await page.evaluate(() => document.fonts.ready);
+    await page.locator(".burst .core").evaluate((node) =>
+      Promise.all(node.getAnimations().map((animation) => animation.finished)),
+    );
+    expect(await page.locator(".burst").getAttribute("data-phase")).toBe("igniting");
+    expect(await page.locator(".burst .u").evaluate((node) => getComputedStyle(node).fontSize)).toBe("60px");
+    await page.screenshot({ path: ".cache/burst-ignition.png", omitBackground: true });
+    await send("/api/mock/advance", { ms: 5000 });
+    await send("/api/mock/chat", { name: "luna", text: "!star" });
+    await page.waitForFunction(() => document.querySelector(".burst .j")?.textContent?.includes("@luna"));
+    await page.locator('[data-user-id="luna"]').evaluate((node) => node.setAttribute("data-existing-chip", "true"));
+    await send("/api/mock/advance", { ms: 4000 });
+    await send("/api/mock/chat", { name: "miso", text: "!star" });
+    await page.waitForFunction(() => document.querySelector(".burst .j")?.textContent?.includes("@miso"));
+    expect(await page.locator(".burst").isVisible()).toBe(true);
+    expect(await page.locator(".burst").getAttribute("data-phase")).toBe("open");
+    expect(await page.locator(".burst").evaluate((node) => getComputedStyle(node).opacity)).toBe("1");
+    expect(await page.locator(".burst .j").textContent()).toContain("with @luna @miso");
+    expect(await page.locator('[data-user-id="luna"]').getAttribute("data-existing-chip")).toBe("true");
+    expect(await page.locator('[data-user-id="miso"]').evaluate((node) => getComputedStyle(node).animationName)).toBe("join-pop");
+    expect(await page.locator(".burst").evaluate((node) => (node as HTMLElement).style.getPropertyValue("--growth"))).toBe("1.12");
+    expect(await page.locator("#stars .st").count()).toBe(0);
+    await send("/api/mock/advance", { ms: 6000 });
+    await page.waitForFunction(() => !document.querySelector(".burst") && document.querySelectorAll("#stars .st").length === 1);
+    expect(await page.locator("#stars .tag").textContent()).toBe("@skywatcher");
+    await page.screenshot({ path: ".cache/burst-settled.png", omitBackground: true });
+  });
+}, 15000);
+
+it("renders two joiners at +6 s and keeps enlarged bursts clear of the band and compact webcam", async () => {
+  await withMockOverlay(async (page, send) => {
+    await send("/api/mock/advance", { ms: 5000 });
+    await send("/api/mock/chat", { name: "luna", text: "!star" });
+    await send("/api/mock/advance", { ms: 1000 });
+    await send("/api/mock/chat", { name: "miso", text: "!star" });
+    await page.waitForFunction(() => document.querySelector(".burst .j")?.textContent?.includes("@miso"));
+    await page.locator(".glyph-open").evaluate((node) =>
+      Promise.all(node.getAnimations().map((animation) => animation.finished)),
+    );
+    await page.locator('[data-user-id="miso"]').evaluate((node) =>
+      Promise.all(node.getAnimations().map((animation) => animation.finished)),
+    );
+    await page.screenshot({ path: ".cache/burst-joiners.png", omitBackground: true });
+    for (let i = 3; i < 10; i++)
+      await send("/api/mock/chat", { name: `join${i}`, text: "!star" });
+    await page.waitForFunction(() => document.querySelector(".join-extra")?.textContent === "+6");
+    expect(await page.locator(".join-chip[data-user-id]").count()).toBe(3);
+    expect(await page.locator(".burst").evaluate((node) => Number((node as HTMLElement).style.getPropertyValue("--growth")))).toBeCloseTo(1.36);
+    for (const query of ["pos=bottom", "pos=top", "pos=compact", "pos=compact&x=0&y=0&width=380"]) {
+      await page.goto(new URL("/overlay?" + query, page.url()).href);
+      await page.waitForFunction(() => document.querySelector<HTMLElement>(".burst")?.dataset.phase === "open");
+      expect(await page.locator(".burst .j").textContent()).toContain("@miso");
+      const box = (await page.locator(".burst").boundingBox())!;
+      expect(box.x).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width).toBeLessThanOrEqual(1920);
+      expect(box.y).toBeGreaterThanOrEqual(0);
+      expect(box.y + box.height).toBeLessThanOrEqual(1080);
+      if (query.includes("bottom")) expect(box.y + box.height).toBeLessThanOrEqual(984);
+      if (query.includes("top")) expect(box.y).toBeGreaterThanOrEqual(96);
+      if (query.includes("compact")) {
+        // Include the aura/glow margin, as well as the compact band and caption.
+        expect(box.y - 60).toBeGreaterThanOrEqual(200);
+        for (const selector of ["#axis", "#head", ".burst .u", ".burst .j"]) {
+          const b = (await page.locator(selector).boundingBox())!;
+          expect(b.x >= 400 || b.y >= 200).toBe(true);
+        }
+      }
+    }
+  });
+}, 15000);
+
+it("expires a burst at its deadline without further server messages", async () => {
+  await withMockOverlay(async (page) => {
+    await page.clock.fastForward(2500);
+    expect(await page.locator(".burst").getAttribute("data-phase")).toBe("open");
+    await page.clock.fastForward(13000);
+    await page.clock.fastForward(300);
+    expect(await page.locator(".burst").count()).toBe(0);
+    expect(await page.locator("#stars .st").count()).toBe(1);
+  }, true);
+}, 15000);
