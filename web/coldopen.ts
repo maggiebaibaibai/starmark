@@ -28,6 +28,8 @@ export function coldopenPage() {
     document.documentElement.dataset.playing = "false";
   };
   $("skip").onclick = stop;
+  // The skip button is for a local preview window; on the OBS output it would be seen by viewers. Show it only with ?skip.
+  if (!new URLSearchParams(location.search).has("skip")) $("skip").style.display = "none";
   addEventListener("keydown", (event) => {
     if (event.key === "Escape") stop();
   });
