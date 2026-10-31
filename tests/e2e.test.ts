@@ -471,3 +471,89 @@ it.each(["offline event", "existing service drain"])(
   },
   30_000,
 );
+
+function rehearsalCard(withReasons = true): Stream {
+  const startedAt = Date.UTC(2026, 9, 31, 20);
+  return {
+    id: "rehearsal-layout", channel: "fixture", title: "", startedAt,
+    endedAt: startedAt + 638_000, viewerCount: 3, cooldowns: {},
+    sequence: 5, clipAttempts: 0, warnings: [], mock: true,
+    stars: [61, 117, 390, 530, 560].map((offsetSeconds, i) => {
+      const owner = { id: `viewer-${i}`, name: "fixture_viewer" };
+      return {
+        id: `fixture-${i}`, owner, offsetSeconds,
+        openedAt: startedAt + offsetSeconds * 1000,
+        reason: withReasons ? ["", "", "", "that sky", "first night live"][i]! : "",
+        lighters: i === 2 ? [owner, { id: "a", name: "join_a" }, { id: "b", name: "join_b" }] : [owner],
+      };
+    }),
+  };
+}
+
+it.each([true, false])("renders non-overlapping rehearsal labels and badges (reasons: %s)", async (withReasons) => {
+  await server.store.saveStream(rehearsalCard(withReasons));
+  const page = await browser.newPage({ viewport: { width: 1080, height: 1350 } });
+  const bounds = () => page.evaluate(() => {
+    const boxes = (selector: string) => Array.from(document.querySelectorAll(selector), (node) => {
+      const b = node.getBoundingClientRect();
+      return { left: b.left, right: b.right, top: b.top, bottom: b.bottom };
+    });
+    return { labels: boxes(".card-label"), glyphs: boxes(".card-glyph") };
+  });
+  try {
+    let original: Awaited<ReturnType<typeof bounds>> | undefined;
+    for (const width of [1080, 540]) {
+      await page.setViewportSize({ width, height: 1350 });
+      for (const suffix of ["", "?export=1"]) {
+        await page.goto(base + "/card/rehearsal-layout" + suffix);
+        await page.waitForFunction(() => document.documentElement.dataset.ready === "true");
+        const boxes = await bounds();
+        expect(boxes.labels).toHaveLength(5);
+        expect(boxes.glyphs).toHaveLength(5);
+        expect(await page.locator(".card-label .rk").count()).toBe(3);
+        const factor = width / 1080;
+        const normalized = Object.fromEntries(Object.entries(boxes).map(([key, items]) =>
+          [key, items.map((box) => Object.fromEntries(Object.entries(box).map(([k, value]) =>
+            [k, Math.round(value / factor * 100) / 100]))) ]));
+        if (original) expect(normalized).toEqual(original);
+        else original = normalized as typeof boxes;
+        boxes.labels.forEach((box, i) => {
+          expect(box.left).toBeGreaterThanOrEqual(84 * factor - 0.01);
+          expect(box.right).toBeLessThanOrEqual(996 * factor + 0.01);
+          expect(box.top).toBeGreaterThanOrEqual(420 * factor - 0.01);
+          expect(box.bottom).toBeLessThanOrEqual(1080 * factor + 0.01);
+          for (const other of [...boxes.labels.slice(i + 1), ...boxes.glyphs]) {
+            const intersects = box.left < other.right && box.right > other.left &&
+              box.top < other.bottom && box.bottom > other.top;
+            expect(intersects, `label ${i} must not cover another label or any glyph`).toBe(false);
+          }
+        });
+      }
+    }
+  } finally { await page.close(); }
+});
+
+it("omits empty title rows and local footer URLs while retaining public links and titles", async () => {
+  const fixture = rehearsalCard();
+  const page = await browser.newPage();
+  try {
+    for (const hostname of ["localhost", "127.0.0.1", "[::1]", "starmark.example"]) {
+      const isLocal = hostname !== "starmark.example";
+      await page.route("**/api/streams/rehearsal-layout", (route) => route.fulfill({ json: {
+        ...fixture, title: isLocal ? "  " : "A night together", durationSeconds: 638,
+        cardUrl: `http://${hostname}:3000/card/rehearsal-layout`,
+      } }));
+      await page.goto(base + "/card/rehearsal-layout");
+      await page.waitForFunction(() => document.documentElement.dataset.ready === "true");
+      expect(await page.locator(".ch .m br").count()).toBe(isLocal ? 0 : 1);
+      expect((await page.locator(".ch .m").textContent())!.includes("“")).toBe(!isLocal);
+      expect(await page.locator(".card-address").count()).toBe(isLocal ? 0 : 1);
+      expect(await page.locator(".cf .a").textContent()).toContain("twitch.tv/fixture");
+      if (!isLocal) {
+        expect(await page.locator(".ch .m").textContent()).toContain("“A night together”");
+        expect(await page.locator(".card-address").textContent()).toContain(hostname);
+      }
+      await page.unroute("**/api/streams/rehearsal-layout");
+    }
+  } finally { await page.close(); }
+});

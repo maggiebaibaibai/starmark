@@ -1,3 +1,4 @@
+import { layoutCardLabels, publicCardAddress, type Box } from "./card-layout.js";
 import {
   $,
   api,
@@ -23,8 +24,10 @@ export async function cardPage(id: string) {
     stars = stream.stars,
     top = topThree(stars),
     max = Math.max(1, ...stars.map((s) => s.lighters.length));
+  const title = stream.title.trim();
+  const address = publicCardAddress(stream.cardUrl);
   $("app").innerHTML =
-    `<div id="card" class="stage"><canvas id="cardDust" width="1080" height="1350"></canvas><div class="ch"><div class="k">STARMAP · TWITCH.TV/${esc(stream.channel.toUpperCase())}</div><div class="h">Last night you lit<br><i>${stars.length} ${stars.length === 1 ? "star" : "stars"}</i></div><div class="m">${esc(new Date(stream.startedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }))} · ${Math.floor(length / 3600)}h ${Math.floor((length % 3600) / 60)}m live · ${totalLighters(stars)} of you lit them<br>“${esc(stream.title)}”</div></div><svg id="cardSvg" width="1080" height="1350" aria-label="Starmap: time across, lighters up"></svg><div class="cf"><div class="a">Every star opens its moment<small>twitch.tv/${esc(stream.channel)}</small><small class="card-address">${esc(stream.cardUrl)}</small></div><div class="b">starmark</div></div><div class="tip" id="tip"><div class="t1"></div><div class="t2"></div><div class="t3"></div><div class="t4"></div></div></div>`;
+    `<div id="card" class="stage"><canvas id="cardDust" width="1080" height="1350"></canvas><div class="ch"><div class="k">STARMAP · TWITCH.TV/${esc(stream.channel.toUpperCase())}</div><div class="h">Last night you lit<br><i>${stars.length} ${stars.length === 1 ? "star" : "stars"}</i></div><div class="m">${esc(new Date(stream.startedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }))} · ${Math.floor(length / 3600)}h ${Math.floor((length % 3600) / 60)}m live · ${totalLighters(stars)} of you lit them${title ? `<br>“${esc(title)}”` : ""}</div></div><svg id="cardSvg" width="1080" height="1350" aria-label="Starmap: time across, lighters up"></svg><div class="cf"><div class="a">Every star opens its moment<small>twitch.tv/${esc(stream.channel)}</small>${address ? `<small class="card-address">${esc(address)}</small>` : ""}</div><div class="b">starmark</div></div><div class="tip" id="tip"><div class="t1"></div><div class="t2"></div><div class="t3"></div><div class="t4"></div></div></div>`;
   fitStage($("card"), 1080, 1350, true);
   await document.fonts.ready;
   dust($<HTMLCanvasElement>("cardDust"), 460, 11);
@@ -76,14 +79,15 @@ export async function cardPage(id: string) {
       { x: 540, y: 820, "text-anchor": "middle", class: "cr" },
       svg,
     ).textContent = "An empty sky. A new beginning.";
-  // Labels keep their approved visual hierarchy; reserve rows to avoid collisions.
-  const occupied: {
-    left: number;
-    right: number;
-    top: number;
-    bottom: number;
-  }[] = [];
   const ordered = [...top, ...stars.filter((s) => !top.includes(s))];
+  const labels: {
+    group: SVGGElement;
+    parent: SVGAElement;
+    glyph: SVGPathElement;
+    cx: number;
+    cy: number;
+    isTop: boolean;
+  }[] = [];
   for (const s of ordered) {
     const rank = top.indexOf(s),
       isTop = rank >= 0,
@@ -105,122 +109,39 @@ export async function cardPage(id: string) {
         svg,
       );
     if (isTop) mk("circle", { r: size * 2.8, fill: "url(#glow)" }, g);
-    mk(
+    const glyph = mk(
       "path",
       {
+        class: "card-glyph",
+        "data-star-id": s.id,
         d: starPath(isTop ? size * 1.25 : size),
         fill: isTop ? "var(--gold)" : "var(--star)",
       },
       g,
     );
     mk("circle", { r: 45, fill: "transparent" }, g);
-    const height = isTop ? 100 : /[^\x00-\x7f]/.test(s.reason) ? 65 : 30;
-    const width = isTop ? 330 : 260;
-    let left = cx > 760,
-      lx = left ? -(size + 18) : size + 18,
-      anchor = left ? "end" : "start";
-    let boxLeft = left ? cx + lx - width : cx + lx,
-      labelY = cy + (isTop ? -14 : 7);
-    const collision = (bx: number, by: number) =>
-      occupied.find(
-        (b) =>
-          bx < b.right &&
-          bx + width > b.left &&
-          by - 25 < b.bottom &&
-          by + height - 25 > b.top,
-      );
-    if (collision(boxLeft, labelY) || boxLeft < 40 || boxLeft + width > 1060) {
-      const alt = left ? cx + size + 18 : cx - size - 18 - width;
-      if (alt >= 40 && alt + width <= 1060 && !collision(alt, labelY)) {
-        left = !left;
-        lx = left ? -(size + 18) : size + 18;
-        anchor = left ? "end" : "start";
-        boxLeft = alt;
-      }
-    }
-    for (let n = 0; n < 16; n++) {
-      const conflict = collision(boxLeft, labelY);
-      if (!conflict) break;
-      labelY = conflict.bottom + 30;
-      if (labelY + height > 1090) labelY = 540 + n * 28;
-    }
-    occupied.push({
-      left: boxLeft,
-      right: boxLeft + width,
-      top: labelY - 25,
-      bottom: labelY + height - 25,
-    });
-    if (Math.abs(labelY - cy) > 50)
-      mk(
-        "line",
-        {
-          x1: 0,
-          y1: 0,
-          x2: lx,
-          y2: labelY - cy,
-          stroke: "rgba(255,246,220,.18)",
-        },
-        g,
-      );
+    // The badge travels with its label, rather than floating over nearby stars.
+    const label = mk("g", { class: "card-label", "data-star-id": s.id }, g);
+    const textX = isTop ? 46 : 0;
     if (isTop) {
-      const bx = left ? size + 20 : -(size + 20);
-      mk("circle", { cx: bx, cy: -size - 6, r: 17, fill: "var(--gold)" }, g);
-      mk(
-        "text",
-        { x: bx, y: -size + 1, "text-anchor": "middle", class: "rk" },
-        g,
-      ).textContent = String(rank + 1);
+      mk("circle", { cx: 17, cy: -7, r: 17, fill: "var(--gold)" }, label);
+      mk("text", { x: 17, y: 0, "text-anchor": "middle", class: "rk" }, label)
+        .textContent = String(rank + 1);
     }
-    const text = mk(
-      "text",
-      {
-        x: lx,
-        y: labelY - cy,
-        "text-anchor": anchor,
-        class: "cl" + (isTop ? " top" : ""),
-      },
-      g,
-    );
-    text.textContent = `${clockTime(s.offsetSeconds)}  @${s.owner.name}`;
-    if (text.getComputedTextLength() > width) {
-      text.setAttribute("textLength", String(width));
-      text.setAttribute("lengthAdjust", "spacingAndGlyphs");
-    }
+    mk("text", { x: textX, y: 0, class: "cl" + (isTop ? " top" : "") }, label)
+      .textContent = `${clockTime(s.offsetSeconds)}  @${s.owner.name}`;
     if (isTop) {
-      const reason = mk(
-        "text",
-        { x: lx, y: labelY - cy + 38, "text-anchor": anchor, class: "cr" },
-        g,
-      );
-      reason.textContent = s.reason || "this moment";
-      if (reason.getComputedTextLength() > width) {
-        reason.setAttribute("textLength", String(width));
-        reason.setAttribute("lengthAdjust", "spacingAndGlyphs");
-      }
-      const credits = mk(
-        "text",
-        { x: lx, y: labelY - cy + 66, "text-anchor": anchor, class: "cj" },
-        g,
-      );
-      credits.textContent =
-        s.lighters.length > 1
-          ? "with " + withLine(s)
-          : "lit by @" + s.owner.name;
-      if (credits.getComputedTextLength() > width) {
-        credits.setAttribute("textLength", String(width));
-        credits.setAttribute("lengthAdjust", "spacingAndGlyphs");
-      }
-    }
-    if (!isTop && /[^\x00-\x7f]/.test(s.reason)) {
-      const reason = mk(
-        "text",
-        { x: lx, y: labelY - cy + 31, "text-anchor": anchor, class: "cr" },
-        g,
-      );
+      mk("text", { x: textX, y: 38, class: "cr" }, label)
+        .textContent = s.reason || "this moment";
+      mk("text", { x: textX, y: 66, class: "cj" }, label)
+        .textContent = s.lighters.length > 1 ? "with " + withLine(s) : "lit by @" + s.owner.name;
+    } else if (/[^\x00-\x7f]/.test(s.reason)) {
+      const reason = mk("text", { x: textX, y: 31, class: "cr" }, label);
       reason.style.fill = "rgba(255,246,220,.8)";
       reason.style.fontSize = "26px";
       reason.textContent = s.reason;
     }
+    labels.push({ group: label, parent: g, glyph, cx, cy, isTop });
     const show = () => {
       const tip = $("tip");
       tip.innerHTML = `<div class="t1">${clockTime(s.offsetSeconds)} · ${s.lighters.length} of you</div><div class="t2">@${esc(s.owner.name)}</div><div class="t3">${esc(s.reason)}</div><div class="t4">${link ? "↗ Open this moment" + (stream.mock ? " · mock link" : "") : "No recording · timestamp saved"}</div>`;
@@ -233,6 +154,44 @@ export async function cardPage(id: string) {
     g.addEventListener("mouseleave", () => $("tip").classList.remove("on"));
     g.addEventListener("blur", () => $("tip").classList.remove("on"));
   }
+  // SVG-only fonts may load after the header. Measure only once all label fonts
+  // are ready, in SVG units so responsive cards and PNG exports share positions.
+  for (const label of labels) label.group.getBBox();
   await document.fonts.ready;
+  const box = (rect: DOMRect, dx = 0, dy = 0): Box => ({
+    left: rect.x + dx, top: rect.y + dy,
+    right: rect.x + rect.width + dx, bottom: rect.y + rect.height + dy,
+  });
+  const glyphs = labels.map((label) => box(label.glyph.getBBox(), label.cx, label.cy));
+  for (const label of labels) {
+    for (const text of label.group.querySelectorAll("text:not(.rk)")) {
+      const element = text as SVGTextElement;
+      const width = label.isTop ? 330 : 260;
+      if (element.getComputedTextLength() > width) {
+        element.setAttribute("textLength", String(width));
+        element.setAttribute("lengthAdjust", "spacingAndGlyphs");
+      }
+    }
+  }
+  const bounds = labels.map((label) => label.group.getBBox());
+  const { positions, scale } = layoutCardLabels(labels.map((label, i) => ({
+    width: bounds[i]!.width, height: bounds[i]!.height,
+    topOffset: (label.isTop ? -14 : 7) + bounds[i]!.y,
+    cy: label.cy, glyph: glyphs[i]!,
+  })), [...glyphs, ...Array.from(svg.querySelectorAll<SVGTextElement>(".ax"),
+    (axis) => box(axis.getBBox()))]);
+  labels.forEach((label, i) => {
+    const target = positions[i]!, boundsAt = bounds[i]!;
+    label.group.setAttribute("transform", `translate(${target.left - boundsAt.x * scale - label.cx},${target.top - boundsAt.y * scale - label.cy}) scale(${scale})`);
+    const nearestX = Math.max(target.left, Math.min(target.right, label.cx));
+    const nearestY = Math.max(target.top, Math.min(target.bottom, label.cy));
+    if (Math.abs(nearestY - label.cy) > 35) {
+      const leader = mk("line", {
+        x1: 0, y1: 0, x2: nearestX - label.cx, y2: nearestY - label.cy,
+        stroke: "rgba(255,246,220,.18)", "pointer-events": "none",
+      }, label.parent);
+      label.parent.prepend(leader);
+    }
+  });
   document.documentElement.dataset.ready = "true";
 }
